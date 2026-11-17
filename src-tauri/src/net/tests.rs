@@ -1,6 +1,5 @@
 use super::*;
-use serde_json::{json, Value};
-use std::net::SocketAddr;
+use serde_json::json;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -84,16 +83,6 @@ fn transport_errors_redact_proxy_auth_without_hiding_failure_category() {
 }
 
 #[test]
-fn proxy_probe_checks_feed_envelope_instead_of_http_status_only() {
-    let valid = json!({"status": 1, "data": {"items": [{"id": 1, "title": "fixture"}], "pagination": {"page": 1, "size": 1, "pages": 1, "total": 1}}});
-    assert!(healthy_proxy_response(200, valid.to_string().as_bytes()));
-    assert!(!healthy_proxy_response(403, valid.to_string().as_bytes()));
-    for body in [b"<html>homepage</html>".as_slice(), br#"{"status":0,"data":{}}"#, br#"{"status":1,"data":[]}"#, br#"{"status":1,"data":{"items":[],"pagination":{}}}"#] {
-        assert!(!healthy_proxy_response(200, body));
-    }
-}
-
-#[test]
 fn proxy_cache_identity_changes_with_mode_and_address_without_exposing_secrets() {
     let target = url::Url::parse("https://example.com/").unwrap();
     let custom = crate::proxy::Config::for_test("custom", "http://name:{{PASSWORD_pp0rajep}}@127.0.0.1:7897").unwrap();
@@ -106,40 +95,6 @@ fn proxy_cache_identity_changes_with_mode_and_address_without_exposing_secrets()
         assert_ne!(first, client_key(true, "example.com", 443, false, &changed));
     }
     assert!(!ProxyRoute::for_config(&crate::proxy::Config::for_test("off", "").unwrap(), &target).active);
-}
-
-#[tokio::test]
-async fn proxy_probe_uses_post_envelope_and_does_not_save_draft() {
-    use std::io::{BufRead, BufReader, Read, Write};
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let address = listener.local_addr().unwrap();
-    let serving = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-        let mut reader = BufReader::new(stream.try_clone().unwrap());
-        let mut request = String::new(); reader.read_line(&mut request).unwrap();
-        let mut length = 0; let mut auth = false;
-        loop {
-            let mut line = String::new(); reader.read_line(&mut line).unwrap();
-            if line.trim().is_empty() { break; }
-            if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") { length = value.trim().parse::<usize>().unwrap(); }
-            if line.to_ascii_lowercase().starts_with("authorization:") { auth = true; }
-        }
-        let mut body = vec![0; length]; reader.read_exact(&mut body).unwrap();
-        let data = json!({"status":1,"data":{"items":[],"pagination":{"page":1,"size":1,"pages":0,"total":0}}}).to_string();
-        write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{data}", data.len()).unwrap();
-        (request, serde_json::from_slice::<Value>(&body).unwrap(), auth)
-    });
-    let before = crate::proxy::snapshot();
-    let config = crate::proxy::Config::for_test("custom", &format!("http://{address}")).unwrap();
-    // Host has no DNS record; only the explicitly supplied HTTP proxy can answer.
-    let result = probe_proxy_origin("http://unresolved.fixture.invalid", &config, false).await.unwrap();
-    assert_eq!(result["ok"], true);
-    let (request, body, auth) = serving.join().unwrap();
-    assert!(request.starts_with("POST http://unresolved.fixture.invalid/api/edge/request HTTP/1.1"));
-    assert_eq!(body, json!({"method":"GET","path":"/api/videos?page=1&size=1","body":"","content_type":""}));
-    assert!(!auth);
-    assert!(crate::proxy::snapshot() == before);
 }
 
 #[tokio::test]
@@ -239,106 +194,6 @@ async fn non_idempotent_operations_are_attempted_once() {
         assert!(result.is_err());
         assert_eq!(calls.load(Ordering::SeqCst), expected);
     }
-}
-
-#[test]
-fn dns_diagnostics_only_expose_counts_and_fake_ip_presence() {
-    let addrs: Vec<SocketAddr> = ["10.0.0.1:443", "198.18.0.2:443", "[::ffff:198.18.0.3]:443"]
-        .into_iter()
-        .map(|raw| raw.parse().unwrap())
-        .collect();
-    let summary = dns_summary(addrs);
-    assert_eq!(summary, json!({"count": 3, "has_fake_ip": true}));
-    assert!(!summary.to_string().contains("10.0.0.1"));
-    assert!(!summary.to_string().contains("198.18"));
-    assert_eq!(
-        dns_summary(Vec::<SocketAddr>::new()),
-        json!({"count":0,"has_fake_ip":false})
-    );
-}
-
-#[test]
-fn diagnostic_http_success_overrides_a_failed_direct_tcp_probe() {
-    let dns = json!({
-        "count": 2,
-        "has_fake_ip": false,
-        "kinds": ["public"],
-    });
-    let tcp = json!({
-        "mode": "direct_socket",
-        "proxy_bypassed": true,
-        "family": "IPv6",
-        "ok": false,
-        "timeout": true,
-        "error": "连接超时（SYN 无响应）",
-    });
-    let http = json!({ "status": 200, "proxy_configured": true });
-
-    let (code, summary, advice) = verdict(&dns, &tcp, &http);
-    assert_eq!(code, "ok_proxy");
-    assert!(summary.contains("HTTP 200"));
-    assert!(summary.contains("独立直连 TCP 探测失败"));
-    assert!(advice.is_empty());
-}
-
-#[test]
-fn diagnostic_proxy_handshake_failure_does_not_blame_the_direct_route() {
-    let dns = json!({
-        "count": 2,
-        "has_fake_ip": false,
-        "kinds": ["public"],
-    });
-    let tcp = json!({
-        "mode": "direct_socket",
-        "proxy_bypassed": true,
-        "family": "IPv6",
-        "ok": false,
-        "timeout": true,
-        "error": "连接超时（SYN 无响应）",
-    });
-    let http = json!({
-        "proxy_configured": true,
-        "kind": "transport_error",
-        "error": "error sending request ← tls handshake eof",
-    });
-
-    let (code, summary, advice) = verdict(&dns, &tcp, &http);
-    assert_eq!(code, "proxy_fail");
-    assert!(summary.contains("应用 HTTP 请求经已配置代理失败"));
-    assert!(summary.contains("绕过了应用 HTTP 代理"));
-    assert!(!summary.contains("运营商"));
-    assert!(advice.iter().any(|item| item.contains("代理节点")));
-}
-
-#[test]
-fn direct_tcp_failure_alone_is_not_reported_as_operator_blocking() {
-    let dns = json!({
-        "count": 1,
-        "has_fake_ip": false,
-        "kinds": ["public"],
-    });
-    let tcp = json!({ "ok": false, "timeout": true });
-    let http = json!({
-        "proxy_configured": false,
-        "kind": "transport_error",
-        "error": "connection timeout",
-    });
-
-    let (code, summary, _) = verdict(&dns, &tcp, &http);
-    assert_eq!(code, "http_fail");
-    assert!(summary.contains("独立直连 TCP 探测也失败"));
-    assert!(!summary.contains("运营商"));
-}
-
-#[test]
-fn diagnostic_http_error_status_is_not_overridden_by_direct_tcp_failure() {
-    let dns = json!({ "count": 1, "has_fake_ip": false, "kinds": ["public"] });
-    let tcp = json!({ "ok": false, "timeout": true });
-    let http = json!({ "status": 503, "proxy_configured": true });
-
-    let (code, summary, _) = verdict(&dns, &tcp, &http);
-    assert_eq!(code, "http_status");
-    assert!(summary.contains("503"));
 }
 
 #[test]
@@ -516,15 +371,4 @@ async fn private_get_is_rejected_before_network() {
     .await
     .unwrap_err();
     assert!(err.contains("禁止访问"));
-}
-
-/// 手动跑：`cargo test --lib -- --ignored net::tests::diag -- --nocapture`
-/// 关掉 TUN、只留系统代理时跑一遍，能直接看出客户端有没有走代理。
-#[tokio::test]
-#[ignore = "联网测试：请求上游做网络自检，手动用 --ignored 运行"]
-async fn diag() {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&diagnose().await).expect("json")
-    );
 }

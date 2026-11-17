@@ -2,13 +2,13 @@
 //!
 //! Publisher scripts are parsed as data; remote JavaScript is never executed.
 
-use dom_query::Document;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
-use super::jsparse::js_array;
+use crate::publish_parser::{parse_mirrors, script_src};
+pub(super) use crate::publish_parser::MIRROR_MAX;
 
 // huangguoai.ai is only a navigation/landing page: every /api/* call there is
 // an nginx 404, so it is not an API line and carries no credential trust.
@@ -19,7 +19,6 @@ pub(crate) const PUBLISH_PAGES: [&str; 2] = [
     "https://huangguoai.pages.dev/",
     "https://huang-guo.pages.dev/",
 ];
-pub(crate) const MIRROR_MAX: usize = 60;
 const RECOMMENDED_MAX: usize = 20;
 const PAGE_TIMEOUT: Duration = Duration::from_secs(8);
 const MAX_PUBLISH_BYTES: usize = 512 * 1024;
@@ -161,71 +160,6 @@ async fn mirrors_from_page(page: &str) -> Result<PublishedPage, String> {
     .map_err(|_| "获取地址发布页超时（8 秒）".to_owned())?
 }
 
-pub(crate) fn parse_mirrors(js: &str) -> Result<Vec<Value>, String> {
-    let domains = js_array(js, "urls")?.unwrap_or_default();
-    let subs = js_array(js, "subdomains")?.unwrap_or_default();
-    if domains.is_empty() {
-        return Err("发布脚本中没有找到镜像域名".into());
-    }
-    let mut items = Vec::new();
-    let mut seen = HashSet::new();
-    'domains: for domain in domains {
-        let domain = domain.trim().trim_end_matches('/').to_ascii_lowercase();
-        if !valid_dns_name(&domain) {
-            continue;
-        }
-        let hosts: Vec<_> = if subs.is_empty() {
-            vec![domain]
-        } else {
-            subs.iter()
-                .filter_map(|sub| {
-                    let sub = sub.trim().to_ascii_lowercase();
-                    valid_dns_label(&sub).then(|| format!("{sub}.{domain}"))
-                })
-                .collect()
-        };
-        for host in hosts {
-            if !valid_dns_name(&host) || !seen.insert(host.clone()) {
-                continue;
-            }
-            let Some(origin) = crate::net::normalize_base(&format!("https://{host}")) else {
-                continue;
-            };
-            items.push(json!({ "url": origin, "host": host }));
-            if items.len() >= MIRROR_MAX {
-                break 'domains;
-            }
-        }
-    }
-    if items.is_empty() {
-        Err("发布脚本中没有合法镜像地址".into())
-    } else {
-        Ok(items)
-    }
-}
-
-fn valid_dns_label(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 63
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        && value.as_bytes()[0].is_ascii_alphanumeric()
-        && value.as_bytes()[value.len() - 1].is_ascii_alphanumeric()
-}
-
-fn valid_dns_name(value: &str) -> bool {
-    value.len() <= 253
-        && value.contains('.')
-        && value.split('.').all(valid_dns_label)
-        && !["localhost", "local", "internal", "home.arpa", "huangguoai.ai"]
-            .iter()
-            .any(|suffix| value == *suffix || value.ends_with(&format!(".{suffix}")))
-        && url::Url::parse(&format!("https://{value}"))
-            .ok()
-            .is_some_and(|parsed| matches!(parsed.host(), Some(url::Host::Domain(_))))
-}
-
 /// Bounded decoded body; the publisher's outer deadline also covers a slow body.
 async fn get_text(raw: &str) -> Result<String, String> {
     let target = url::Url::parse(raw).map_err(|_| "发布地址无效")?;
@@ -265,37 +199,6 @@ async fn get_text(raw: &str) -> Result<String, String> {
         bytes.extend_from_slice(&chunk);
     }
     String::from_utf8(bytes).map_err(|_| "地址发布页或脚本不是有效 UTF-8".into())
-}
-
-pub(crate) fn script_src(page: &str, html: &str) -> Result<String, String> {
-    let document = Document::from(html);
-    for script in document.select("script[src]").iter() {
-        if let Some(src) = script.attr("src") {
-            if let Ok(url) = absolute(page, &src) {
-                return Ok(url);
-            }
-        }
-    }
-    Err("地址发布页没有同源 publish.js 脚本".into())
-}
-
-pub(crate) fn absolute(base: &str, relative: &str) -> Result<String, String> {
-    if relative.chars().any(char::is_control) {
-        return Err("发布脚本地址含控制字符".into());
-    }
-    let base = url::Url::parse(base).map_err(|_| "发布页地址无效")?;
-    let target = base.join(relative.trim()).map_err(|_| "发布脚本地址无效")?;
-    if base.scheme() != "https"
-        || target.scheme() != "https"
-        || target.origin() != base.origin()
-        || !target.username().is_empty()
-        || target.password().is_some()
-        || target.fragment().is_some()
-        || target.path().rsplit('/').next() != Some("publish.js")
-    {
-        return Err("只接受发布页同源的 HTTPS publish.js".into());
-    }
-    Ok(target.to_string())
 }
 
 /// Persisted lines gain credential trust only after a publisher confirms them.

@@ -15,8 +15,8 @@ loopback、Windows 的自定义标题栏与注册表代理判断、Android 的 W
 - 模块注册与启动：[`src-tauri/src/lib.rs`](../../src-tauri/src/lib.rs) 的 `mod` 列表、
   `media_http_origin`、`allowed_dev_host`、`allowed_frontend_origin`、`run()` 的
   `on_page_load`/`setup`、`generate_handler!`。
-- iOS 布局：[`src-tauri/src/ios_layout.rs`](../../src-tauri/src/ios_layout.rs) 的 `apply()`、
-  `set_text_interaction_on_webview()`；原生媒体服务：
+- iOS 布局与方向：[`src-tauri/src/ios_layout.rs`](../../src-tauri/src/ios_layout.rs) 的 `apply()`、
+  `set_text_interaction_on_webview()`、`request_orientation()`；原生媒体服务：
   [`src-tauri/src/ios_media_http.rs`](../../src-tauri/src/ios_media_http.rs) 的 `origin()`、
   `start()`、`Endpoint`、`parse_request()`、`app_origin()`、`MAX_CONNECTIONS`。
 - macOS 标题栏：[`src-tauri/src/macos_titlebar.rs`](../../src-tauri/src/macos_titlebar.rs) 的

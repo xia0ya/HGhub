@@ -1,126 +1,28 @@
 //! Upstream lines and mirrors published by the upstream address pages.
 //! Publisher scripts are parsed as data; remote JavaScript is never executed.
 
-mod jsparse;
 mod mirror;
 mod probe;
 
+#[allow(unused_imports)]
 pub use mirror::{fixed, is_fixed, is_trusted_mirror, mirrors, verify_published_origin, FIXED};
+#[cfg(test)]
+pub(crate) use mirror::PUBLISH_PAGES;
 pub(crate) use probe::healthy_video_data;
+#[allow(unused_imports)]
 pub use probe::{auto_pick, health, probe, try_main, Hit};
 
 #[cfg(test)]
 mod tests {
-    use super::jsparse::js_array;
-    use super::mirror::{
-        absolute, merge_publishers, parse_mirrors, script_src, PublishedPage, FIXED, MIRROR_MAX,
-        PUBLISH_PAGES,
-    };
+    use super::mirror::{merge_publishers, PublishedPage, FIXED, PUBLISH_PAGES};
     use super::probe::{auto_candidates, healthy_video_data, pick_from_hits, Hit};
     use serde_json::{json, Value};
-
 
     fn origins(items: &[Value]) -> Vec<&str> {
         items
             .iter()
             .filter_map(|item| item["url"].as_str())
             .collect()
-    }
-
-    #[test]
-    fn literal_arrays_support_comments_quotes_and_trailing_commas() {
-        let js = r#"/* before */ var urls = ['EXAMPLE.COM/', "two.example",];
-          const subdomains = [ 'one', // line comment
-          'two', ]; var untouched = 'https://example.com/';"#;
-        let items = parse_mirrors(js).unwrap();
-        assert_eq!(
-            origins(&items),
-            [
-                "https://one.example.com",
-                "https://two.example.com",
-                "https://one.two.example",
-                "https://two.two.example"
-            ]
-        );
-        assert_eq!(
-            js_array("let urls = ['https://host/'];", "urls")
-                .unwrap()
-                .unwrap(),
-            ["https://host/"]
-        );
-    }
-
-    #[test]
-    fn fake_declarations_in_comments_strings_templates_and_regex_are_ignored() {
-        for js in [
-            r#"// var urls=['bad.example'];"#,
-            r#"/* var urls=['bad.example']; */"#,
-            r#"const text = "var urls=['bad.example'];";"#,
-            r#"const text = `var urls=['bad.example'];`;"#,
-            r#"const regex = /var urls=['bad.example'];/;"#,
-            r#"var urlsExtra=['bad.example'];"#,
-            r#"function notRun() { var urls=['bad.example']; }"#,
-        ] {
-            assert!(parse_mirrors(js).is_err(), "{js}");
-        }
-    }
-
-    #[test]
-    fn dynamic_or_malformed_arrays_fail_closed_including_subdomains() {
-        for js in [
-            r#"var urls=['one.example', getHost()];"#,
-            r#"var urls=['one.example' + '.evil'];"#,
-            r#"var urls=['one.example'].concat(other);"#,
-            r#"var urls=['one.example']; var urls=['two.example'];"#,
-            r#"var urls=['one.example']; var subdomains=getSubs();"#,
-            r#"var urls=['one.example']; var subdomains=['one', 2];"#,
-            r#"var urls=['one.example']; /* unfinished"#,
-        ] {
-            assert!(parse_mirrors(js).is_err(), "{js}");
-        }
-    }
-
-    #[test]
-    fn hostnames_are_canonical_bounded_and_not_paths_or_literal_ips() {
-        let items = parse_mirrors(r#"var urls=['Example.COM', 'example.com/', '127.0.0.1', 'localhost', 'x.local', 'x.internal', 'x.home.arpa', 'https://evil.example', 'evil.example/path', 'a.example:443', '-a.example', 'valid.example'];"#).unwrap();
-        assert_eq!(
-            origins(&items),
-            ["https://example.com", "https://valid.example"]
-        );
-        let js = format!(
-            "var urls=[{}];",
-            (0..100)
-                .map(|n| format!("'host{n}.example'"))
-                .collect::<Vec<_>>()
-                .join(",")
-        );
-        assert_eq!(parse_mirrors(&js).unwrap().len(), MIRROR_MAX);
-    }
-
-    #[test]
-    fn publish_script_is_same_origin_and_exact_filename() {
-        let page = PUBLISH_PAGES[0];
-        for html in [
-            "<script src='publish.js?v=2'></script>",
-            "<script src=publish.js></script>",
-            r#"<script src='/analytics.js'></script><script src="/publish.js"></script>"#,
-        ] {
-            let script = script_src(page, html).unwrap();
-            assert!(script.starts_with("https://huangguoai.pages.dev/publish.js"));
-        }
-        for target in [
-            "http://huangguoai.pages.dev/publish.js",
-            "https://other.example/publish.js",
-            "//other.example/publish.js",
-            "javascript:publish.js",
-            "https://user@huangguoai.pages.dev/publish.js",
-            "/publish.js#fragment",
-            "/publish.js/extra",
-            "/publish.js.evil",
-        ] {
-            assert!(absolute(page, target).is_err(), "{target}");
-        }
-        assert!(script_src(page, "<script src='analytics.js'></script>").is_err());
     }
 
     fn page(source: &str, hosts: &[&str]) -> Result<PublishedPage, String> {

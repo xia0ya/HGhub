@@ -19,7 +19,7 @@ pub const UA: &str =
 /// 注意：reqwest 的 `system-proxy` 只在构建时读一次注册表 / 环境变量。代理软件被关掉后，
 /// 旧客户端仍会往 `127.0.0.1:7897` 建隧道，症状是满屏 `tunnel error: failed to create
 /// underlying connection`（浏览器却是通的，因为它每次都重读系统代理）。所以这里允许重建。
-pub(super) fn build_client(host: &str, addrs: &[SocketAddr], route: &ProxyRoute) -> Result<reqwest::Client, String> {
+pub(crate) fn build_client(host: &str, addrs: &[SocketAddr], route: &ProxyRoute) -> Result<reqwest::Client, String> {
     let mut builder = reqwest::Client::builder()
         .user_agent(UA)
         .timeout(Duration::from_secs(20))
@@ -44,15 +44,15 @@ pub(super) fn build_client(host: &str, addrs: &[SocketAddr], route: &ProxyRoute)
 /// One immutable selection is used for DNS, cache identity and client creation.
 /// An in-flight request may finish on its old route; it cannot populate the new
 /// configuration's cache entry after the user saves a different proxy.
-pub(super) struct ProxyRoute {
+pub(crate) struct ProxyRoute {
     mode: crate::proxy::Mode,
-    pub(super) explicit: Option<String>,
-    pub(super) active: bool,
+    pub(crate) explicit: Option<String>,
+    pub(crate) active: bool,
     generation: u64,
 }
 
 impl ProxyRoute {
-    pub(super) fn for_config(config: &crate::proxy::Config, target: &url::Url) -> Self {
+    pub(crate) fn for_config(config: &crate::proxy::Config, target: &url::Url) -> Self {
         use crate::proxy::Mode;
         let explicit = match config.mode {
             Mode::Off => None,
@@ -75,7 +75,7 @@ impl ProxyRoute {
         hash.finish()
     }
 
-    pub(super) fn label(&self) -> String {
+    pub(crate) fn label(&self) -> String {
         if self.mode == crate::proxy::Mode::Off {
             "direct".into()
         } else if let Some(proxy) = &self.explicit {
@@ -199,7 +199,7 @@ fn system_proxy_routes_target(target: &url::Url) -> bool {
     )
 }
 
-pub(super) fn proxy_active(target: &url::Url) -> bool {
+pub(crate) fn proxy_active(target: &url::Url) -> bool {
     ProxyRoute::for_config(&crate::proxy::snapshot(), target).active
 }
 

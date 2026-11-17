@@ -53,12 +53,11 @@ CI 是验证记录。命令写了不等于已经运行；报告里必须写清�
 
 ### Rust
 
-- `src-tauri/src/api/`：Tauri command 与上游 endpoint，按 account/feed/video/interact/update/platform/lines 分文件。
+- `src-tauri/src/api/`：Tauri command 与上游 endpoint，按 account/feed/video/interact/update/platform/lines 分文件；GitHub Release 更新检查与版本对比在 `updater.rs`。
 - `src-tauri/src/net/`：`line`（线路状态）、`proxy_env`、`client`（客户端缓存/DNS/GET）、
-  `redact`、`diagnostics`、`edge`（信封/重试/字节下载）；共享 statics 和测试在 `mod.rs`/`tests.rs`。
+  `redact`、`edge`（信封/重试/字节下载）；网络诊断与草稿代理探测在 `net_diag.rs`；共享 statics 和测试在 `mod.rs`/`tests.rs`。
 - `src-tauri/src/media/`：图片、HLS、分片、Range、响应整形和本地媒体协议入口。
-- `src-tauri/src/lines/`：`mirror`、`jsparse`、`probe` 三块，负责固定/发布镜像/自定义线路、
-  JS-as-data 解析、探测与自动选线。
+- `src-tauri/src/lines/`：`mirror`、`probe` 负责固定/发布镜像/自定义线路、探测与自动选线；无状态发布页与 JS-as-data 解析在 `publish_parser.rs`。
 - `src-tauri/src/ios_layout.rs`、`ios_media_http.rs`、`linux_http.rs`、`linux_webview.rs`、
   `macos_titlebar.rs`：按 `cfg` 编译的平台壳；Windows/Android 的壳逻辑部分在 `lib.rs` 与前端。
 - `src-tauri/src/session.rs`、`cache.rs`、`env.rs`、`playback_log.rs`、`network_policy.rs`：

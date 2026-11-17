@@ -84,7 +84,7 @@ pub(super) fn edge_operation(path: &str) -> &'static str {
 }
 
 /// 仅无请求体、无凭据的逻辑 GET 可以迁移网关；信封本身仍使用 POST。
-pub(super) fn edge_redirect_target(
+pub(crate) fn edge_redirect_target(
     current: &url::Url,
     status: u16,
     location: &str,

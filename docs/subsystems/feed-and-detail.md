@@ -11,8 +11,12 @@ Feed 负责列表播放页的条目位置、详情/帖子读取、标签门、�
 
 - [`src/features/feed/Feed.tsx`](../../src/features/feed/Feed.tsx)：`requestPlay`、
   `useFeedDetails` 的调用、`tagKey`/`permissionKey`、`effectiveVideoIds`、
-  `details`/`posts`、`relatedByVideo`、`actionContext`、`actionIsCurrent`、
-  `onLike`/`onFav`/`onFollow`、桌面 dock 与移动 Sheet。
+  `details`/`posts`、`relatedByVideo`、`actionContext`；视口/手势/动作与界面覆盖层分别位于同目录的
+  [`useFeedViewport.ts`](../../src/features/feed/useFeedViewport.ts)、
+  [`useFeedTouchGestures.ts`](../../src/features/feed/useFeedTouchGestures.ts)、
+  [`useFeedActions.ts`](../../src/features/feed/useFeedActions.ts)、
+  [`FeedItemChrome.tsx`](../../src/features/feed/FeedItemChrome.tsx)、
+  [`FeedPlayerShellChrome.tsx`](../../src/features/feed/FeedPlayerShellChrome.tsx)。
 - [`src/features/feed/useFeedDetails.ts`](../../src/features/feed/useFeedDetails.ts)：
   `detailRequests`、`requestDetail`、`effectiveVideoIds`、`detailsRef`。
 - [`src/features/feed/Panels.tsx`](../../src/features/feed/Panels.tsx) 的

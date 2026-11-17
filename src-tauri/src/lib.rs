@@ -17,11 +17,14 @@ mod macos_titlebar;
 mod media;
 mod media_dns;
 mod net;
+mod net_diag;
 mod network_policy;
 mod playback_log;
 mod proxy;
+mod publish_parser;
 mod search_hot;
 mod session;
+mod updater;
 
 use api::Api;
 use tauri::Manager;

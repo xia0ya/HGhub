@@ -1,13 +1,13 @@
 /// 手动指定代理（排查 / 公司内网用）：`HGHUBX_PROXY=http://127.0.0.1:7897`。
 /// 不设时交给 reqwest 的 `system-proxy` 探测（注册表 + 环境变量）。
-pub(super) fn proxy_override() -> Option<String> {
+pub(crate) fn proxy_override() -> Option<String> {
     crate::env::var("PROXY")
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
 }
 
 /// 进程环境变量里有没有代理（reqwest 的 `system-proxy` 会自己读这些，不重复应用）。
-pub(super) fn env_proxy_set() -> bool {
+pub(crate) fn env_proxy_set() -> bool {
     ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"]
         .iter()
         .any(|key| std::env::var(key).ok().is_some_and(|v| !v.trim().is_empty()))
@@ -61,7 +61,7 @@ fn format_proxy_url(scheme: &str, host: &str, port: &str) -> String {
 /// Linux 桌面（GNOME）的固定手动代理：`mode=manual` 时取 http，为空再试 socks。
 /// PAC（mode=auto）不支持，返回 None。
 #[cfg(target_os = "linux")]
-pub(super) fn gnome_proxy() -> Option<String> {
+pub(crate) fn gnome_proxy() -> Option<String> {
     if gsettings_get("org.gnome.system.proxy", "mode").as_deref() != Some("manual") {
         return None;
     }
@@ -79,7 +79,7 @@ pub(super) fn gnome_proxy() -> Option<String> {
 }
 
 #[cfg(not(target_os = "linux"))]
-pub(super) fn gnome_proxy() -> Option<String> {
+pub(crate) fn gnome_proxy() -> Option<String> {
     None
 }
 
@@ -137,7 +137,7 @@ fn macos_proxy_enabled() -> bool {
 }
 
 /// 操作系统级系统代理是否已启用（Windows 注册表 / macOS scutil / Linux GNOME），只报 bool。
-pub(super) fn system_proxy_enabled() -> bool {
+pub(crate) fn system_proxy_enabled() -> bool {
     windows_proxy_enabled() || macos_proxy_enabled() || gnome_proxy().is_some()
 }
 
