@@ -205,6 +205,33 @@ mod tests {
         assert_eq!(store.token("https://custom.example"), None);
         assert!(store.stored_origin().is_none());
     }
+
+    #[tokio::test]
+    async fn boot_reconcile_verifies_stored_mirror_even_when_current_line_is_fixed() {
+        let store = SessionStore::new();
+        store.set("https://mirror-a.example", "secret-token".into(), json!({"id": 1}));
+        let published = std::sync::Mutex::new(Vec::<String>::new());
+        store
+            .reconcile_with(
+                "https://huangguoai.com",
+                || "https://huangguoai.com".to_string(),
+                |origin| {
+                    origin == "https://huangguoai.com"
+                        || published.lock().unwrap().iter().any(|item| item == origin)
+                },
+                |origin| {
+                    if origin != "https://huangguoai.com" {
+                        published.lock().unwrap().push("https://mirror-a.example".into());
+                    }
+                    std::future::ready(())
+                },
+            )
+            .await;
+        assert_eq!(
+            store.token("https://huangguoai.com").as_deref(),
+            Some("secret-token")
+        );
+    }
 }
 
 pub struct SessionStore {
@@ -306,15 +333,41 @@ impl SessionStore {
     /// already bound to an unverified current origin only gets the original
     /// publisher refresh, never a move.
     pub async fn reconcile_on_boot(&self, origin: &str) {
+        self.reconcile_with(
+            origin,
+            crate::net::base,
+            rebase_trust,
+            |target| async move {
+                let _ = crate::lines::verify_published_origin(&target).await;
+            },
+        )
+        .await;
+    }
+
+    async fn reconcile_with<Cur, Trust, Verify, Fut>(
+        &self,
+        origin: &str,
+        current_base: Cur,
+        trusted: Trust,
+        mut verify: Verify,
+    ) where
+        Cur: Fn() -> String,
+        Trust: Fn(&str) -> bool,
+        Verify: FnMut(String) -> Fut,
+        Fut: std::future::Future<Output = ()>,
+    {
         let rev = self.revision();
         let stored = self.stored_origin();
-        if self.token(origin).is_none() && stored.as_deref().is_some_and(|old| old != origin) {
-            let _ = crate::lines::verify_published_origin(origin).await;
-            if crate::net::base() == origin && self.revision() == rev {
-                let _ = self.rebase_if_trusted(origin, rebase_trust);
+        if self.token(origin).is_none() {
+            if let Some(old) = stored.as_deref().filter(|old| *old != origin) {
+                verify(old.to_owned()).await;
+                verify(origin.to_owned()).await;
+                if current_base() == origin && self.revision() == rev {
+                    let _ = self.rebase_if_trusted(origin, trusted);
+                }
             }
-        } else if self.token(origin).is_some() && !crate::net::trusted_auth_origin(origin) {
-            let _ = crate::lines::verify_published_origin(origin).await;
+        } else if !crate::net::trusted_auth_origin(origin) {
+            verify(origin.to_owned()).await;
         }
     }
 
@@ -371,6 +424,7 @@ impl SessionStore {
         true
     }
 
+    #[cfg(test)]
     pub fn set(&self, origin: &str, token: String, user: serde_json::Value) {
         {
             let mut cur = self.current.lock().unwrap();

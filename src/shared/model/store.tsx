@@ -1,6 +1,6 @@
-import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { api, platform as envPlatform } from "../api/api";
-import { isStrictSecurity, setStrictSecurity as setHtmlStrictSecurity } from "../lib/html";
+import { isStrictSecurity, setStrictSecurity as setHtmlStrictSecurity } from "../lib/securityMode";
 import type { User } from "../api/types";
 import { readStorage, STORAGE_KEYS } from "../storage/storage";
 import { pickGuestData, useAccountData, type GuestData } from "./accountData";
@@ -148,7 +148,9 @@ function applyTheme(theme: Theme) {
   document.documentElement.style.colorScheme = theme;
   root.dataset.theme = theme;
   const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-  if (meta) meta.content = theme === "light" ? "#eeece7" : "#121212";
+  if (meta && !root.hasAttribute("data-hg-launching")) {
+    meta.content = theme === "light" ? "#eeece7" : "#121212";
+  }
 }
 
 let themeTransitionTimer = 0;
@@ -165,7 +167,7 @@ type Store = {
   platform: Platform;
   theme: Theme; themePreference: ThemePreference; setTheme: (t: ThemePreference) => void;
   tab: Tab; setTab: (t: Tab) => void;
-  stack: Page[]; push: (p: PageInput) => void; pop: () => void;
+  stack: Page[]; push: (p: PageInput) => void; openRootPage: (p: PageInput) => void; pop: () => void;
   user: User | null; setUser: (u: User | null, origin?: string) => void;
   accountScope: string; accountSync: { busy: boolean; error: string; lastSynced: number; favoritesKnown: boolean };
   syncAccount: () => Promise<void>;
@@ -175,7 +177,7 @@ type Store = {
   actionPending: (key: string) => boolean;
   loginOpen: boolean; setLoginOpen: (b: boolean) => void;
   logout: () => Promise<void>;
-  likes: number[]; favs: number[]; history: WatchProgress[]; follows: number[];
+  likes: number[]; favs: number[]; postLikes: number[]; postFavs: number[]; history: WatchProgress[]; follows: number[];
   isLiked: (id: number, ep?: number, kind?: "video" | "post") => boolean; isFav: (id: number, kind?: "video" | "post") => boolean;
   toggleLikeLocal: (id: number) => boolean;
   toggleFavLocal: (id: number) => boolean;
@@ -187,6 +189,8 @@ type Store = {
   fs: boolean; setFs: (v: boolean | ((p: boolean) => boolean)) => void;
   /** 移动端「净屏」：只留画面，UI 全隐 */
   clean: boolean; setClean: (v: boolean | ((p: boolean) => boolean)) => void;
+  /** 锁屏状态：锁屏期间隐藏移动端底栏 */
+  locked: boolean; setLocked: (v: boolean) => void;
   muted: boolean; setMuted: (v: boolean | ((p: boolean) => boolean)) => void;
   muteOnStartup: boolean; setMuteOnStartup: (on: boolean) => void;
   swipeEp: boolean; setSwipeEp: (on: boolean) => void;
@@ -204,12 +208,34 @@ const Ctx = createContext<Store>(null as unknown as Store);
 export const useStore = () => useContext(Ctx);
 let seq = 0;
 
+/* 独立订阅 Toast 列表：弹出/消失只重渲染 ToastHost，不惊动全应用 30 个 useStore() 页面 */
+let toastList: Toast[] = [];
+let toastNextId = 0;
+const toastListeners = new Set<() => void>();
+function updateToasts(updater: (prev: Toast[]) => Toast[]) {
+  toastList = updater(toastList);
+  toastListeners.forEach((fn) => fn());
+}
+function pushToastItem(item: Omit<Toast, "id">, durationMs: number) {
+  const id = ++toastNextId;
+  updateToasts((prev) => [...prev.slice(-2), { ...item, id }]);
+  window.setTimeout(() => updateToasts((prev) => prev.filter((x) => x.id !== id)), durationMs);
+}
+const subscribeToasts = (fn: () => void) => {
+  toastListeners.add(fn);
+  return () => { toastListeners.delete(fn); };
+};
+const getToasts = () => toastList;
+export const useToasts = () => useSyncExternalStore(subscribeToasts, getToasts);
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [p, setP] = useState<Persist>(loadPersist);
   const [themePreference, setThemePreferenceState] = useState<ThemePreference>(readThemePreference);
   const [theme, setThemeState] = useState<Theme>(() => resolveTheme(readThemePreference()));
   const themeRef = useRef(theme);
   const [tab, setTabRaw] = useState<Tab>("home");
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
   const [stack, setStack] = useState<Page[]>([]);
   // Guest library writes must not roll back sound, quality, gestures or search preferences.
   const account = useAccountData(
@@ -219,16 +245,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const { user, setUser } = account;
   const accountRef = useRef(account); accountRef.current = account;
   const [loginOpen, setLoginOpen] = useState(false);
-  const [toasts, setToasts] = useState<Toast[]>([]);
   const [lineEpoch, setLineEpoch] = useState(0);
   const [theater, setTheaterState] = useState(false);
   const [fs, setFsState] = useState(false);
   const [clean, setCleanState] = useState(false);
+  const [locked, setLockedState] = useState(false);
+  const lastVolumeRef = useRef(p.volume > 0 ? p.volume : 0.7);
   const [strictSecurity, setStrictSecurityState] = useState<boolean>(isStrictSecurity);
   const [cliRelaxed, setCliRelaxed] = useState(false);
   const [strictSecurityReady, setStrictSecurityReady] = useState(false);
   const [securityPending, setSecurityPending] = useState(false);
-  const toastSeq = useRef(0);
 
   useEffect(() => {
     const media = matchMedia("(prefers-color-scheme: dark)");
@@ -305,18 +331,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [strictSecurityReady]);
 
   const toast = useCallback((msg: string, icon?: Toast["icon"]) => {
-    const id = ++toastSeq.current;
-    setToasts((t) => [...t.slice(-2), { id, msg, icon }]);
-    window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2200);
+    pushToastItem({ msg, icon }, 2200);
   }, []);
   /** 自动选线切换成功后由 `autoLine.ts` 派发，这里只负责显示 */
   useEffect(() => {
     const onLine = (e: Event) => {
       const d = (e as CustomEvent<{ region: "cn" | "intl"; host: string; ms: number }>).detail;
       if (!d) return;
-      const id = ++toastSeq.current;
-      setToasts((t) => [...t.slice(-2), { id, msg: "", line: d }]);
-      window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3200);
+      pushToastItem({ msg: "", line: d }, 3200);
     };
     window.addEventListener("hg:line", onLine);
     return () => window.removeEventListener("hg:line", onLine);
@@ -333,9 +355,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const now = Date.now();
       if (now - last < 60_000) return;
       last = now;
-      const id = ++toastSeq.current;
-      setToasts((t) => [...t.slice(-2), { id, msg: "线路全部不可用，请检查网络或代理", icon: "info" }]);
-      window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3600);
+      pushToastItem({ msg: "线路全部不可用，请检查网络或代理", icon: "info" }, 3600);
     };
     window.addEventListener("hg:line-down", onDown);
     return () => window.removeEventListener("hg:line-down", onDown);
@@ -355,12 +375,49 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const setTab = useCallback((t: Tab) => { setTabRaw(t); setStack(s => s.length ? [] : s); }, []);
+  const exitNativeFs = useCallback(() => {
+    if (typeof document !== "undefined" && document.fullscreenElement) {
+      document.exitFullscreen?.().catch(() => {});
+    }
+  }, []);
+
+  const setTab = useCallback((t: Tab) => {
+    exitNativeFs();
+    setFsState(false);
+    setCleanState(false);
+    setLockedState(false);
+    if (t !== "home") setTheaterState(false);
+    setTabRaw(t);
+    setStack(s => s.length ? [] : s);
+  }, [exitNativeFs]);
   useEffect(() => { if (tab === "profile") void accountRef.current.syncAccount().catch(() => {}); }, [tab]);
   const push = useCallback((pg: PageInput) => {
+    exitNativeFs();
+    setFsState(false);
+    setCleanState(false);
+    setLockedState(false);
+    if (pg.kind !== "feed") setTheaterState(false);
     setStack((s) => [...s, { ...pg, key: `p${++seq}` } as Page]);
-  }, []);
-  const pop = useCallback(() => setStack((s) => s.slice(0, -1)), []);
+  }, [exitNativeFs]);
+  const openRootPage = useCallback((pg: PageInput) => {
+    exitNativeFs();
+    setFsState(false);
+    setCleanState(false);
+    setLockedState(false);
+    if (pg.kind !== "feed") setTheaterState(false);
+    setStack([{ ...pg, key: `p${++seq}` } as Page]);
+  }, [exitNativeFs]);
+  const pop = useCallback(() => {
+    exitNativeFs();
+    setFsState(false);
+    setCleanState(false);
+    setLockedState(false);
+    setStack((s) => {
+      const next = s.slice(0, -1);
+      if (!next.length && tabRef.current !== "home") setTheaterState(false);
+      return next;
+    });
+  }, [exitNativeFs]);
 
   const addSearch = useCallback((q: string) => {
     const t = q.trim();
@@ -388,8 +445,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setCleanState((prev) => (typeof v === "function" ? (v as (p: boolean) => boolean)(prev) : v));
   }, []);
 
+  const setLocked = useCallback((v: boolean) => {
+    setLockedState(v);
+  }, []);
+
   const setMuted = useCallback((v: boolean | ((prev: boolean) => boolean)) => {
-    setP((s) => ({ ...s, muted: typeof v === "function" ? v(s.muted) : v }));
+    setP((s) => {
+      const nextMuted = typeof v === "function" ? v(s.muted) : v;
+      if (!nextMuted && s.volume === 0) {
+        return { ...s, muted: false, volume: lastVolumeRef.current || 0.7 };
+      }
+      return { ...s, muted: nextMuted };
+    });
   }, []);
   const setMuteOnStartup = useCallback((on: boolean) => {
     setP((s) => ({ ...s, muteOnStartup: on }));
@@ -405,32 +472,33 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
   const setVolume = useCallback((v: number) => {
     const volume = Math.max(0, Math.min(1, v));
+    if (volume > 0) lastVolumeRef.current = volume;
     setP((s) => ({ ...s, volume, muted: volume === 0 }));
   }, []);
 
   const value = useMemo<Store>(() => ({
     platform: envPlatform,
     theme, themePreference, setTheme,
-    tab, setTab, stack, push, pop,
+    tab, setTab, stack, push, openRootPage, pop,
     user, setUser, loginOpen, setLoginOpen, logout,
     accountScope: account.accountScope, accountSync: account.accountSync, syncAccount: account.syncAccount,
-    likes: account.likes, favs: account.favs, history: account.history, follows: account.follows,
+    likes: account.likes, favs: account.favs, postLikes: account.postLikes, postFavs: account.postFavs, history: account.history, follows: account.follows,
     isLiked: account.isLiked, isFav: account.isFav,
     setCollected: account.setCollected, setLiked: account.setLiked, setFollowing: account.setFollowing, actionPending: account.actionPending,
     toggleLikeLocal: account.toggleLikeLocal, toggleFavLocal: account.toggleFavLocal, toggleFollowLocal: account.toggleFollowLocal,
     addHistory: account.addHistory, clearHistory: account.clearHistory,
-    muted: p.muted, setMuted, volume: p.volume, setVolume, theater, setTheater, fs, setFs, clean, setClean,
+    muted: p.muted, setMuted, volume: p.volume, setVolume, theater, setTheater, fs, setFs, clean, setClean, locked, setLocked,
     muteOnStartup: p.muteOnStartup, setMuteOnStartup,
     swipeEp: p.swipeEp, setSwipeEp,
     preferHevc: p.preferHevc, setPreferHevc,
     fsIdleSecs: p.fsIdleSecs, setFsIdleSecs,
     searchHist: p.searchHist, addSearch, clearSearchHist,
     strictSecurity, strictSecurityReady, securityPending, cliRelaxed, setStrictSecurity,
-    toasts, toast, lineEpoch,
-  }), [theme, themePreference, setTheme, tab, setTab, stack, push, pop, user, loginOpen, logout,
+    get toasts() { return toastList; }, toast, lineEpoch,
+  }), [theme, themePreference, setTheme, tab, setTab, stack, push, openRootPage, pop, user, loginOpen, logout,
     p, account,
     setMuted, setMuteOnStartup, setSwipeEp, setPreferHevc, setFsIdleSecs, setVolume, addSearch, clearSearchHist, strictSecurity, strictSecurityReady, securityPending, cliRelaxed, setStrictSecurity,
-    toasts, toast, lineEpoch, theater, setTheater, fs, setFs, clean, setClean]);
+    toast, lineEpoch, theater, setTheater, fs, setFs, clean, setClean, locked, setLocked]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

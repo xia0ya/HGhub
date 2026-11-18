@@ -246,7 +246,9 @@ export default function PlayerPage({ content, sourceKey, part: initialPart, resu
     clock.current.duration = value; clock.current.ready = true; setDuration(value);
     if (restoredSession.current === token) return;
     try {
-      const target = Math.min(pendingRestore.current, Math.max(0, value - .15));
+      const target = pendingRestore.current >= Math.max(1, value - 3)
+        ? 0
+        : Math.min(pendingRestore.current, Math.max(0, value - .15));
       if (target > 0) video.current?.seek(target, "tv_resume");
       clock.current.seconds = target; setTime(target); restoredSession.current = token; setWaiting(false);
       if (!wanted.current) video.current?.pause();

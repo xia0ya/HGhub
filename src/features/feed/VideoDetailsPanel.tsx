@@ -18,7 +18,7 @@ export default function VideoDetailsPanel({ meta, videoId, episodeCount, related
   onFollow, onTag, onAuthor, onRelated, onClose, onPreferences }: {
   meta: VideoMeta; videoId: number; episodeCount: number; related: VideoCard[];
   following: boolean; followPending: boolean; onFollow: () => void; onTag: (tag: string) => void;
-  onAuthor: () => void; onRelated: (video: VideoCard) => void; onClose?: () => void; onPreferences: () => void;
+  onAuthor: () => void; onRelated: (video: VideoCard, visible: VideoCard[]) => void; onClose?: () => void; onPreferences: () => void;
 }) {
   return <div className="video-details-panel" data-video-details>
     {onClose && <div className="video-details-heading">
@@ -64,7 +64,7 @@ export default function VideoDetailsPanel({ meta, videoId, episodeCount, related
       {related.length > 0 && <section className="video-details-section">
         <h3 className="video-details-section-heading">相关推荐</h3>
         <FilteredContent items={related.slice(0, 12)} scopeKey={videoId}>{visible => <div className="scroll-x flex gap-2.5 snap-x">
-          {visible.map(video => <RowCard key={video.id} v={video} onOpen={() => onRelated(video)} />)}
+          {visible.map(video => <RowCard key={video.id} v={video} onOpen={() => onRelated(video, visible)} />)}
         </div>}</FilteredContent>
       </section>}
     </div>

@@ -125,3 +125,96 @@ for (const directory of directories) {
 // of the day/night variants patched.
 for (const [path, xml] of pending) writeFileSync(path, xml);
 console.log(`[splash] Android ${themeCount} 个主题背景已对齐 → ${BRAND}（更新 ${pending.size} 个文件）`);
+
+// Standard edition (com.hghubx.app): keep edge-to-edge video while exposing
+// native system-bar + cutout insets as CSS variables (--native-sat/sar/sab/sal).
+// Old WebViews (e.g. Chromium 66 car headunits) lack CSS env(safe-area-inset-*)
+// and report zero cutout despite persistent status/dock bars (#138).
+const appActivityPath = join(root, "src-tauri", "gen", "android", "app", "src", "main", "java", "com", "hghubx", "app", "MainActivity.kt");
+if (existsSync(appActivityPath)) {
+  const templateActivity = `package com.hghubx.app
+import android.os.Bundle
+import androidx.activity.enableEdgeToEdge
+class MainActivity : TauriActivity() {
+  override fun onCreate(savedInstanceState: Bundle?) {
+    enableEdgeToEdge()
+    super.onCreate(savedInstanceState)
+  }
+}`;
+  const patchedActivity = `package com.hghubx.app
+
+import android.os.Bundle
+import android.view.View
+import android.view.ViewGroup
+import android.webkit.WebView
+import androidx.activity.enableEdgeToEdge
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import kotlin.math.roundToInt
+
+class MainActivity : TauriActivity() {
+  private var insetScript = ""
+  private var webViewHooked = false
+
+  private fun findWebView(view: View?): WebView? {
+    if (view is WebView) return view
+    if (view is ViewGroup) {
+      for (i in 0 until view.childCount) {
+        findWebView(view.getChildAt(i))?.let { return it }
+      }
+    }
+    return null
+  }
+
+  private fun pushInsets(content: View) {
+    val script = insetScript
+    if (script.isEmpty()) return
+    val wv = findWebView(content) ?: return
+    wv.evaluateJavascript(script, null)
+    if (!webViewHooked) {
+      webViewHooked = true
+      for (delay in longArrayOf(150L, 600L, 1500L)) {
+        wv.postDelayed({ if (insetScript.isNotEmpty()) wv.evaluateJavascript(insetScript, null) }, delay)
+      }
+    }
+  }
+
+  override fun onCreate(savedInstanceState: Bundle?) {
+    enableEdgeToEdge()
+    super.onCreate(savedInstanceState)
+    val content = findViewById<View>(android.R.id.content) ?: return
+    ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
+      val bars = insets.getInsets(
+        WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+      )
+      val density = view.resources.displayMetrics.density.coerceAtLeast(1f)
+      val top = (bars.top / density).roundToInt()
+      val right = (bars.right / density).roundToInt()
+      val bottom = (bars.bottom / density).roundToInt()
+      val left = (bars.left / density).roundToInt()
+      insetScript =
+        "(function(){var s=document.documentElement&&document.documentElement.style;if(!s)return;" +
+          "s.setProperty('--native-sat','\${top}px');" +
+          "s.setProperty('--native-sar','\${right}px');" +
+          "s.setProperty('--native-sab','\${bottom}px');" +
+          "s.setProperty('--native-sal','\${left}px');})();"
+      pushInsets(content)
+      insets
+    }
+    content.viewTreeObserver.addOnGlobalLayoutListener {
+      if (!webViewHooked && insetScript.isNotEmpty()) pushInsets(content)
+    }
+    ViewCompat.requestApplyInsets(content)
+  }
+}
+`;
+  const normalize = (text) => text.trim().replace(/\s+/g, " ");
+  const currentActivity = readFileSync(appActivityPath, "utf8");
+  if (![templateActivity, patchedActivity].some((expected) => normalize(expected) === normalize(currentActivity))) {
+    fail(appActivityPath, "MainActivity 与已知 Tauri 模板不同，请审阅原生改动后更新补丁");
+  }
+  if (normalize(currentActivity) !== normalize(patchedActivity)) {
+    writeFileSync(appActivityPath, patchedActivity);
+  }
+  console.log("[splash] Android 标准版系统栏安全区桥接已写入 MainActivity.kt");
+}

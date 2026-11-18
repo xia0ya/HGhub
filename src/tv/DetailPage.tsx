@@ -81,7 +81,12 @@ export default function DetailPage({ content, sourceKey, progress, favorite, onF
   } });
 
   const parts = displayed?.parts ?? [];
-  const resumable = progress?.key === key && parts.some(part => part.id === progress.part);
+  const matchedPart = progress?.key === key ? parts.find(part => part.id === progress.part) : undefined;
+  const resumable = !!matchedPart;
+  const resumeSeconds = resumable && progress!.seconds > 0
+    && !(matchedPart?.duration && matchedPart.duration > 0 && progress!.seconds >= Math.max(1, matchedPart.duration - 3))
+    ? progress!.seconds
+    : 0;
   const firstPart = resumable ? progress!.part : parts[0]?.id;
   const toggleFavorite = async () => {
     if (!displayed || favoritePending) return;
@@ -104,7 +109,7 @@ export default function DetailPage({ content, sourceKey, progress, favorite, onF
           {item.description && <p className="tv-detail-description">{item.description}</p>}
           <div className="tv-detail-tags" aria-label="标签">{displayed?.content.tags.map(tag => <span key={tag}>{tag}</span>)}</div>
           <div className="tv-detail-actions" data-tv-region="detail-actions">
-            <button data-tv-focus={`detail:${key}:play`} className="tv-primary" disabled={!firstPart} onClick={() => firstPart && onPlay(item, firstPart, resumable ? progress!.seconds : 0)}>{resumable && progress!.seconds > 0 ? "继续观看" : "播放"}</button>
+            <button data-tv-focus={`detail:${key}:play`} className="tv-primary" disabled={!firstPart} onClick={() => firstPart && onPlay(item, firstPart, resumeSeconds)}>{resumeSeconds > 0 ? "继续观看" : resumable && progress!.seconds > 0 ? "重新播放" : "播放"}</button>
             <button data-tv-focus={`detail:${key}:favorite`} aria-pressed={favorite} disabled={!displayed || favoritePending} onClick={() => void toggleFavorite()}>{favorite ? "取消收藏" : "收藏"}</button>
             <button data-tv-focus={`detail:${key}:episodes`} disabled={!parts.length} onClick={() => document.querySelector<HTMLButtonElement>(".tv-detail-episodes [data-tv-focus]")?.focus()}>{content.kind === "post" ? "选择分段" : "选集"}</button>
             <button data-tv-focus={`detail:${key}:more`} disabled={!displayed || !item.tags.length} onClick={() => { setSelectedTags([]); setMore(true); }}>更多</button>
@@ -113,7 +118,12 @@ export default function DetailPage({ content, sourceKey, progress, favorite, onF
       </div>
       {error ? <div className="tv-detail-message" role="alert"><p>{error}</p><div data-tv-region="detail-retry"><button data-tv-focus={`detail:${key}:retry`} onClick={() => setRetry(value => value + 1)}>重试</button></div></div> : !displayed ? <p role="status">正在加载详情…</p> : null}
       {!!parts.length && <div className="tv-detail-episodes"><h2>{content.kind === "post" ? "视频分段" : "剧集"}</h2><div className="tv-detail-episode-grid" data-tv-region="detail-episodes" data-tv-columns="5">
-        {parts.map(part => <button key={part.id} data-tv-focus={`detail:${key}:part:${part.id}`} title={part.label} onClick={() => onPlay(item, part.id, progress?.key === key && progress.part === part.id ? progress.seconds : 0)}><span>{part.label}</span>{resumable && progress!.part === part.id ? <small>上次观看</small> : null}</button>)}
+        {parts.map(part => {
+          const partResume = progress?.key === key && progress.part === part.id
+            && !(part.duration && part.duration > 0 && progress.seconds >= Math.max(1, part.duration - 3))
+            ? progress.seconds : 0;
+          return <button key={part.id} data-tv-focus={`detail:${key}:part:${part.id}`} title={part.label} onClick={() => onPlay(item, part.id, partResume)}><span>{part.label}</span>{resumable && progress!.part === part.id ? <small>上次观看</small> : null}</button>;
+        })}
       </div></div>}
     </>}
     {more && !blocked && <TvModal id={`detail-tags:${key}`} title="屏蔽标签" onClose={() => setMore(false)}>

@@ -101,7 +101,7 @@ export function TopicsPage({ onBack, wide }: { onBack: () => void; wide: boolean
         )}
         {wide && <div className="h-2" />}
       </div>
-      {searching && <InplaceSearch kind="video" wide={wide} onClose={() => setSearching(false)} onOpenVideo={(v, list) => push({ kind: "feed", videoIds: list.map((x) => x.id), index: list.findIndex((x) => x.id === v.id), title: "搜索 · 专题" })} />}
+      {searching && <InplaceSearch kind="video" wide={wide} onClose={() => setSearching(false)} onOpenVideo={(v, list, kw) => push({ kind: "feed", videoIds: list.map((x) => x.id), index: list.findIndex((x) => x.id === v.id), title: kw ? `搜索 · ${kw}` : "搜索 · 专题" })} />}
     </div>
   );
 }
@@ -109,9 +109,13 @@ export function TopicsPage({ onBack, wide }: { onBack: () => void; wide: boolean
 /* ================= 专题详情页 ================= */
 export function TopicPage({ slug, name, onBack, wide }: { slug: string; name: string; onBack: () => void; wide: boolean }) {
   const { push, lineEpoch } = useStore();
+  const { preferences } = useContentPreferences();
+  const filtering = !preferences.paused && (preferences.blockedTags.length > 0 || preferences.hideUntagged);
   const [searching, setSearching] = useState(false);
   const [introExpanded, setIntroExpanded] = useState(false);
   const introId = useId();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<{
     topic: TopicDetail["topic"] | null;
     related: TopicCard[];
@@ -185,6 +189,17 @@ export function TopicPage({ slug, name, onBack, wide }: { slug: string; name: st
   const { topic, related, videos, page, pages, total, loading, loadingMore, error } = state;
   const hasMore = page < pages;
 
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || filtering || loading || loadingMore || error || !hasMore || !scrollRef.current) return;
+    const io = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting) loadMore();
+    }, { root: scrollRef.current, rootMargin: "260px" });
+    io.observe(el);
+    return () => io.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtering, loading, loadingMore, error, hasMore, page, pages]);
+
   return (
     <div className="ios-page absolute inset-0 bg-bg flex flex-col">
       <div className="shrink-0 bg-s1" style={{ paddingTop: "var(--sat, 0px)" }}>
@@ -199,7 +214,7 @@ export function TopicPage({ slug, name, onBack, wide }: { slug: string; name: st
 
       </div>
 
-      <div className="flex-1 scroll-y px-4 pt-3 pb-8" aria-busy={loading}>
+      <div ref={scrollRef} className="flex-1 scroll-y pt-3 pb-8" aria-busy={loading}>
         {topic?.intro && <section className="mb-4" aria-label="专题简介">
           <p id={introId} className={`text-[13px] text-mut leading-relaxed break-words ${introExpanded ? "" : "clamp-3"}`}>{topic.intro}</p>
           <Button aria-expanded={introExpanded} aria-controls={introId} onClick={() => setIntroExpanded(value => !value)} className="mt-1 px-2 text-[12px] text-primary">{introExpanded ? "收起简介" : "展开简介"}</Button>
@@ -227,7 +242,7 @@ export function TopicPage({ slug, name, onBack, wide }: { slug: string; name: st
         ) : error && !videos.length ? (
           <Empty icon={<TopicIcon size={26} />} title="加载失败" sub={error} action="重试" onAction={() => void load(1, true)} />
         ) : videos.length ? (
-          <Masonry videos={videos} scopeKey={slug} wide={wide} onOpen={(v) => push({ kind: "feed", videoIds: videos.map((x) => x.id), index: videos.findIndex((x) => x.id === v.id), title: topic?.title || name })} />
+          <Masonry videos={videos} scopeKey={slug} wide={wide} onOpen={(v, visible) => push({ kind: "feed", videoIds: visible.map((x) => x.id), index: visible.findIndex((x) => x.id === v.id), title: topic?.title || name })} />
         ) : (
           <Empty icon={<TopicIcon size={26} />} title="暂无内容" />
         )}
@@ -240,9 +255,10 @@ export function TopicPage({ slug, name, onBack, wide }: { slug: string; name: st
           加载更多（{videos.length}/{total}）
         </Button>}
         {!loading && !loadingMore && !hasMore && videos.length > 0 && <div className="py-3 text-center text-[12px] text-dim">已加载全部 {total} 部</div>}
+        <div ref={sentinelRef} className="h-6" aria-hidden="true" />
         {wide && <div className="h-2" />}
       </div>
-      {searching && <InplaceSearch kind="video" wide={wide} onClose={() => setSearching(false)} onOpenVideo={(v, list) => push({ kind: "feed", videoIds: list.map((x) => x.id), index: list.findIndex((x) => x.id === v.id), title: topic?.title || name })} />}
+      {searching && <InplaceSearch kind="video" wide={wide} onClose={() => setSearching(false)} onOpenVideo={(v, list, kw) => push({ kind: "feed", videoIds: list.map((x) => x.id), index: list.findIndex((x) => x.id === v.id), title: kw ? `搜索 · ${kw}` : "搜索" })} />}
     </div>
   );
 }
@@ -294,7 +310,7 @@ export function TagsPage({ onBack, wide }: { onBack: () => void; wide: boolean }
         )}
         {wide && <div className="h-2" />}
       </div>
-      {searching && <InplaceSearch kind="video" wide={wide} onClose={() => setSearching(false)} onOpenVideo={(v, list) => push({ kind: "feed", videoIds: list.map((x) => x.id), index: list.findIndex((x) => x.id === v.id), title: "搜索 · 标签" })} />}
+      {searching && <InplaceSearch kind="video" wide={wide} onClose={() => setSearching(false)} onOpenVideo={(v, list, kw) => push({ kind: "feed", videoIds: list.map((x) => x.id), index: list.findIndex((x) => x.id === v.id), title: kw ? `搜索 · ${kw}` : "搜索 · 标签" })} />}
     </div>
   );
 }
@@ -428,7 +444,7 @@ export function TagPage({ tag, name, onBack, wide }: { tag: string; name: string
         {videoErr && !visibleVideos.length && <Empty icon={<TagIcon size={26} />} title="短剧加载失败" sub={videoErr} action="重试" onAction={() => void load("video", 1, true)} />}
         {visibleVideos.length > 0 && <section className="mb-6">
           <h2 className="mb-3 text-[14px] font-semibold text-on">短剧 <span className="text-[12px] font-normal text-mut">{videoTotal}</span></h2>
-          <Masonry videos={visibleVideos} scopeKey={`tag-video:${tag}`} wide={wide} onOpen={(v) => push({ kind: "feed", videoIds: visibleVideos.map(x => x.id), index: visibleVideos.findIndex(x => x.id === v.id), title: name })} />
+          <Masonry videos={visibleVideos} scopeKey={`tag-video:${tag}`} wide={wide} onOpen={(v, visible) => push({ kind: "feed", videoIds: visible.map(x => x.id), index: visible.findIndex(x => x.id === v.id), title: name })} />
         </section>}
         <div ref={videoSentinel} className="h-2" />
         {videoErr && visibleVideos.length > 0 && <div role="status" className="flex flex-wrap items-center justify-center gap-2 py-2 text-[12px] text-mut"><span>短剧加载失败：{videoErr}</span><Button onClick={() => void load("video", videoPage + 1)} className="px-3 text-primary">重试</Button></div>}
@@ -449,7 +465,7 @@ export function TagPage({ tag, name, onBack, wide }: { tag: string; name: string
         {!postLoading && !postErr && postPage < postPages && <Button onClick={() => void load("post", postPage + 1)} className="my-2 px-4 text-primary">加载更多吃瓜</Button>}
         {!videoLoading && !postLoading && !videoErr && !postErr && !visibleVideos.length && !visiblePosts.length && <Empty icon={<TagIcon size={26} />} title="该标签下暂无内容" />}
       </div>
-      {searching && <InplaceSearch kind="video" wide={wide} onClose={() => setSearching(false)} onOpenVideo={(v, list) => push({ kind: "feed", videoIds: list.map(x => x.id), index: list.findIndex(x => x.id === v.id), title: name })} />}
+      {searching && <InplaceSearch kind="video" wide={wide} onClose={() => setSearching(false)} onOpenVideo={(v, list, kw) => push({ kind: "feed", videoIds: list.map(x => x.id), index: list.findIndex(x => x.id === v.id), title: kw ? `搜索 · ${kw}` : "搜索" })} />}
     </div>
   );
 }

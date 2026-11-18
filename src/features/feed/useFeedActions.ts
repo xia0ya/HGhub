@@ -61,7 +61,7 @@ export function useFeedActions({
   const collected = isFav(curId, kind);
   const likeActionKey = `like:${kind}:${curId}:${curEp}`;
   const collectActionKey = `collect:${kind}:${curId}`;
-  const followActionKey = `follow:${kind === "video" ? detail?.author?.id || 0 : 0}`;
+  const followActionKey = `follow:${meta.authorId > 0 ? meta.authorId : 0}`;
   const likePending = actionPending(likeActionKey);
   const collectPending = actionPending(collectActionKey);
   const followPending = actionPending(followActionKey);

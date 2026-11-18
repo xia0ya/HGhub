@@ -41,7 +41,7 @@ export function inspectPost(content: TvContent, context: EligibilityContext, ret
     try {
       const parsed = await api.postPlayback(content.id);
       if (!current()) return { status: "discarded" };
-      const segments = (parsed.videos || []).filter(video => !!video.url).map(video => video.index);
+      const segments = (parsed.videos || []).filter(video => Number.isInteger(video.index) && !!video.url?.trim()).map(video => video.index);
       const value: PostEligibility = segments.length
         ? { status: "playable", segments }
         : { status: "retryable", message: "暂未确认可播放，可重试" };

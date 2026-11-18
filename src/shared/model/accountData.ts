@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/api";
 import type { AccountHistoryItem, AccountIdentity, AccountInteractions, User } from "../api/types";
 import type { WatchProgress } from "./store";
@@ -55,8 +55,9 @@ function applyInteractions(data: AccountData, incoming?: AccountInteractions): A
 
 /** Separate guest/account caches. Async responses may commit only to their initiating session. */
 export function useAccountData(initialGuest: GuestData, saveGuest: (data: GuestData) => void) {
-  const [, redraw] = useState(0);
-  const render = () => redraw(n => n + 1);
+  const [drawTick, redraw] = useState(0);
+  const snapshotRevision = useRef(0);
+  const render = () => { snapshotRevision.current++; redraw(n => n + 1); };
   const mounted = useRef(true);
   const saveGuestRef = useRef(saveGuest); saveGuestRef.current = saveGuest;
   const state = useRef<{ user: User | null; origin: string; key: string; generation: number; data: AccountData; sync: SyncState } | null>(null);
@@ -89,19 +90,20 @@ export function useAccountData(initialGuest: GuestData, saveGuest: (data: GuestD
     if (!s.user || !s.origin) throw new Error("请先登录当前线路的账号");
     return { expectedUserId: s.user.id, expectedOrigin: s.origin };
   };
-  const persist = (data: AccountData) => {
+  const persist = (data: AccountData, silent = false) => {
     const s = state.current!;
     s.data = data;
     if (!s.user) {
       guest.current = data;
+      snapshotRevision.current++;
       saveGuestRef.current(pickGuestData(data));
+      return;
     }
-    else {
-      accounts.current[s.key] = data;
-      try { localStorage.setItem(ACCOUNT_KEY, JSON.stringify({ version: 1, accounts: accounts.current })); storageError.current = ""; }
-      catch { storageError.current = "本机账号缓存保存失败，请检查存储空间"; s.sync = { ...s.sync, error: storageError.current }; }
-    }
-    if (mounted.current) render();
+    accounts.current[s.key] = data;
+    let storageFailed = false;
+    try { localStorage.setItem(ACCOUNT_KEY, JSON.stringify({ version: 1, accounts: accounts.current })); storageError.current = ""; }
+    catch { storageError.current = "本机账号缓存保存失败，请检查存储空间"; s.sync = { ...s.sync, error: storageError.current }; storageFailed = true; }
+    if (mounted.current && (!silent || storageFailed)) render();
   };
   const flushHistory = async () => {
     const generation = state.current!.generation;
@@ -118,7 +120,7 @@ export function useAccountData(initialGuest: GuestData, saveGuest: (data: GuestD
         const current = state.current!.data;
         if (current.dirtyHistory[id]?.at === row.at) {
           const dirtyHistory = { ...current.dirtyHistory }; delete dirtyHistory[id];
-          persist({ ...current, dirtyHistory });
+          persist({ ...current, dirtyHistory }, true);
         }
       }
     })();
@@ -281,20 +283,20 @@ export function useAccountData(initialGuest: GuestData, saveGuest: (data: GuestD
     }).catch(() => {});
     return run;
   };
-  const setCollected = (kind: Kind, id: number, on: boolean) => mutate(`collect:${kind}:${id}`,
+  const setCollected = useCallback((kind: Kind, id: number, on: boolean) => mutate(`collect:${kind}:${id}`,
     auth => kind === "video" ? api.collect(id, on, auth) : api.postCollect(id, on, auth),
-    data => kind === "video" ? { ...data, favs: selected(data.favs, id, on) } : { ...data, postFavs: selected(data.postFavs, id, on) });
-  const setLiked = (kind: Kind, id: number, ep: number, on: boolean) => mutate(`like:${kind}:${id}:${ep}`,
+    data => kind === "video" ? { ...data, favs: selected(data.favs, id, on) } : { ...data, postFavs: selected(data.postFavs, id, on) }), []);
+  const setLiked = useCallback((kind: Kind, id: number, ep: number, on: boolean) => mutate(`like:${kind}:${id}:${ep}`,
     auth => kind === "video" ? api.like(id, ep, on, auth) : api.postLike(id, on, auth), data => {
       if (kind === "post") return { ...data, postLikes: selected(data.postLikes, id, on) };
       const likeEpisodes = (data.likeEpisodes || data.likes.map(video_id => ({ video_id, ep: 1 }))).filter(row => row.video_id !== id || row.ep !== ep);
       if (on) likeEpisodes.push({ video_id: id, ep });
       return { ...data, likeEpisodes, likes: selected(data.likes, id, likeEpisodes.some(row => row.video_id === id)) };
-    });
-  const setFollowing = (id: number, on: boolean) => {
+    }), []);
+  const setFollowing = useCallback((id: number, on: boolean) => {
     if (!state.current!.user) return Promise.reject(new Error("请先登录"));
     return mutate(`follow:${id}`, auth => api.follow(id, on, auth), data => ({ ...data, follows: selected(data.follows, id, on) }));
-  };
+  }, []);
   const currentGeneration = state.current.generation;
   const currentClearVersion = clearVersion.current;
   const addHistory = useCallback((id: number, ep?: number, time?: number, duration?: number) => {
@@ -314,7 +316,7 @@ export function useAccountData(initialGuest: GuestData, saveGuest: (data: GuestD
     persist({ ...s.data, history: [row, ...s.data.history.filter(item => item.id !== id)], dirtyHistory, localHistory: selected(s.data.localHistory, id, true) });
     if (s.user && Object.keys(dirtyHistory).length) scheduleUpload(currentGeneration);
   }, [currentGeneration, currentClearVersion]);
-  const clearHistory = async () => {
+  const clearHistory = useCallback(async () => {
     const version = state.current!.generation;
     if (clearing.current === version) return;
     clearing.current = version;
@@ -337,11 +339,11 @@ export function useAccountData(initialGuest: GuestData, saveGuest: (data: GuestD
       }
       if (isCurrent(version)) { historyMutation.current++; clearVersion.current++; sentHistory.current.clear(); persist({ ...state.current!.data, history: [], dirtyHistory: {}, localHistory: [] }); }
     } finally { if (clearing.current === version) clearing.current = null; }
-  };
-  const localToggle = (field: "likes" | "favs" | "follows", id: number) => {
+  }, []);
+  const localToggle = useCallback((field: "likes" | "favs" | "follows", id: number) => {
     const on = !state.current!.data[field].includes(id); mutation.current++;
     persist({ ...state.current!.data, [field]: selected(state.current!.data[field], id, on) }); return on;
-  };
+  }, []);
   useEffect(() => {
     mounted.current = true;
     const refresh = () => { if (document.visibilityState !== "hidden") void syncRef.current().catch(() => {}); };
@@ -350,13 +352,17 @@ export function useAccountData(initialGuest: GuestData, saveGuest: (data: GuestD
       window.removeEventListener("focus", refresh); window.removeEventListener("online", refresh); document.removeEventListener("visibilitychange", refresh); };
   }, []);
   const s = state.current;
-  return { user: s.user, setUser, restoreSession, generation, logout, accountScope: `${s.key}:${s.generation}`, accountSync: s.sync,
-    syncAccount, likes: s.data.likes, favs: s.data.favs, follows: s.data.follows, history: s.data.history,
+  const rev = snapshotRevision.current;
+  return useMemo(() => ({
+    user: s.user, setUser, restoreSession, generation, logout, accountScope: `${s.key}:${s.generation}`, accountSync: s.sync,
+    syncAccount, likes: s.data.likes, favs: s.data.favs, postLikes: s.data.postLikes, postFavs: s.data.postFavs, follows: s.data.follows, history: s.data.history,
     isFav: (id: number, kind: Kind = "video") => (kind === "video" ? s.data.favs : s.data.postFavs).includes(id),
     isLiked: (id: number, ep?: number, kind: Kind = "video") => kind === "post" ? s.data.postLikes.includes(id)
       : ep !== undefined && s.data.likeEpisodes ? s.data.likeEpisodes.some(row => row.video_id === id && row.ep === ep) : s.data.likes.includes(id),
     setCollected, setLiked, setFollowing, addHistory, clearHistory,
     actionPending: (key: string) => pending.current.has(key),
-    toggleLikeLocal: (id: number) => localToggle("likes", id), toggleFavLocal: (id: number) => localToggle("favs", id), toggleFollowLocal: (id: number) => localToggle("follows", id),
-  };
+    toggleLikeLocal: (id: number) => localToggle("likes", id),
+    toggleFavLocal: (id: number) => localToggle("favs", id),
+    toggleFollowLocal: (id: number) => localToggle("follows", id),
+  }), [rev, drawTick, setUser, restoreSession, generation, logout, syncAccount, setCollected, setLiked, setFollowing, addHistory, clearHistory, localToggle]);
 }

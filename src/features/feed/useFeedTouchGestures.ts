@@ -20,6 +20,7 @@ type Args = {
   idle: boolean;
   setIdle: Dispatch<SetStateAction<boolean>>;
   arm: () => void;
+  wake: () => void;
   swipeEp: boolean;
   kind: "video" | "post";
   curId: number;
@@ -39,7 +40,7 @@ type Args = {
 
 export function useFeedTouchGestures({
   boxRef, videoRef, pinchRef, playbackClock, isDesktop, active, controlsLocked, showHoldGuide,
-  rotated, fs, clean, setClean, idle, setIdle, arm, swipeEp, kind, curId, epMap, setEpMap,
+  rotated, fs, clean, setClean, idle, setIdle, arm, wake, swipeEp, kind, curId, epMap, setEpMap,
   episodesLength, effectiveLength, go, duration, playUrl, playKey, openTagMenu, setPanel, setTagMenu, toast,
 }: Args) {
   const [holdSpeed, setHoldSpeed] = useState(0);
@@ -85,10 +86,16 @@ export function useFeedTouchGestures({
   /* —— 长按加速（移入顶部胶囊锁定） / 横拖定位 / 单击净屏、双击暂停 —— */
   const onDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (isDesktop || controlsLocked || !active || showHoldGuide) return;
-    const rect = e.currentTarget.getBoundingClientRect();
+    if (e.pointerType === "touch" && e.isPrimary && !pinchRef.current && !gesture.current && pointersRef.current.size > 0) {
+      pointersRef.current.clear();
+    }
+    if (!pointersRef.current.has(e.pointerId) && pointersRef.current.size >= 2) return;
+    const el = e.currentTarget;
+    const rect = el.getBoundingClientRect();
     const rotation: HoldRotation = rotated ? 90 : 0;
     const point = getHoldPoint(e.clientX, e.clientY, rect, rotation);
     pointersRef.current.set(e.pointerId, { x: point.x, y: point.y });
+    try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     if (pointersRef.current.size === 2) {
       const pts = [...pointersRef.current.values()];
       const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
@@ -113,11 +120,9 @@ export function useFeedTouchGestures({
       return;
     }
     if (gesture.current || e.button !== 0) return;
-    const el = e.currentTarget;
     const width = point.width || 1;
     // 分区/引导共用播放器坐标：CSS 旋转横屏下「视频右上」不再是「屏幕右上」。
     const zone = getHoldZone(point.x, point.y, point.width, point.height);
-    try { el.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     const g = {
       x: point.x, y: point.y, startY: point.y, t: Date.now(), base: videoRef.current?.el()?.currentTime ?? playbackClock.getSnapshot(), width,
       mode: "idle" as "idle" | "hold" | "scrub" | "pan",
@@ -244,7 +249,7 @@ export function useFeedTouchGestures({
         const dir = dy < 0 ? 1 : -1;
         const ep = epMap[curId] || 1;
         const total = episodesLength;
-        const want = dir === 1 ? (total === 0 || ep < total ? ep + 1 : 0) : (ep > 1 ? ep - 1 : 0);
+        const want = dir === 1 ? (total > 1 && ep < total ? ep + 1 : 0) : (ep > 1 ? ep - 1 : 0);
         if (swipeEp && kind === "video" && want) {
           setEpMap((m) => ({ ...m, [curId]: want }));
           toast(`第 ${want}集${total ? ` / ${total}` : ""}`, "info");
@@ -324,17 +329,24 @@ export function useFeedTouchGestures({
     setBarPct(pct);
     return pct;
   };
+  useEffect(() => {
+    barScrub.current = false;
+    setBarPct(null);
+  }, [active, fs, clean, playKey]);
+
   const onBarDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     e.stopPropagation();
     barRef.current = e.currentTarget;
     videoRef.current?.trace("seek.input.down", { input: "mobile_bar" });
     barScrub.current = true;
+    wake();
     try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
     barSeekTo(e.clientX, e.clientY);
   };
   const onBarMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (!barScrub.current) return;
     e.stopPropagation();
+    wake();
     videoRef.current?.trace("seek.input.move", { input: "mobile_bar" });
     barSeekTo(e.clientX, e.clientY);
   };
@@ -342,6 +354,7 @@ export function useFeedTouchGestures({
     if (!barScrub.current) return;
     barScrub.current = false;
     e.stopPropagation();
+    wake();
     const pct = !cancelled ? barPctAt(e.clientX, e.clientY) : null;
     if (pct != null && duration) {
       const target = pct * duration;

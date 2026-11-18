@@ -3,6 +3,7 @@ import { Loader } from "../../shared/ui/ios/effects";
 import { useEffect, useRef, useState } from "react";
 import { fmt } from "../../shared/api/api";
 import type { Post, VideoCard } from "../../shared/api/types";
+import { useStore } from "../../shared/model/store";
 import { MediaCard, Masonry } from "../../shared/ui/cards";
 import { FilteredContent } from "../../shared/ui/FilteredContent";
 import { Empty } from "../../shared/ui/ui";
@@ -16,11 +17,12 @@ export function InplaceSearch({ kind, postLabel = "吃瓜帖", scope, onOpenVide
   kind: "video" | "post";
   postLabel?: string;
   scope?: "original";
-  onOpenVideo?: (v: VideoCard, list: VideoCard[]) => void;
+  onOpenVideo?: (v: VideoCard, list: VideoCard[], keyword: string) => void;
   onOpenPost?: (p: Post) => void;
   onClose: () => void;
   wide?: boolean;
 }) {
+  const { searchHist, addSearch, clearSearchHist } = useStore();
   const [q, setQ] = useState("");
   const [submitted, setSubmitted] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -39,6 +41,7 @@ export function InplaceSearch({ kind, postLabel = "吃瓜帖", scope, onOpenVide
     const trimmed = keyword.trim();
     if (!trimmed) return;
     setQ(trimmed); setSubmitted(trimmed);
+    if (!scope) addSearch(trimmed);
     results.search(trimmed, kind);
   };
 
@@ -54,20 +57,40 @@ export function InplaceSearch({ kind, postLabel = "吃瓜帖", scope, onOpenVide
   return (
     <div ref={rootRef} role="dialog" aria-modal="true" aria-label={`${label}搜索`} tabIndex={-1}
       onKeyDown={event => event.stopPropagation()}
-      className="ios-page ios-inplace-search absolute inset-0 z-20 bg-bg flex flex-col outline-none">
-      <div className="shrink-0 px-4 pb-3 flex items-center gap-2.5 bg-s1" style={{ paddingTop: "calc(var(--sat, 0px) + 12px)" }}>
+      className="ios-page ios-inplace-search absolute inset-0 z-30 bg-bg flex flex-col outline-none">
+      <div className="shrink-0 pb-3 flex items-center gap-2.5 bg-s1" style={{ paddingTop: "calc(var(--sat, 0px) + 12px)" }}>
         <Button onClick={onClose} className="w-9 h-9 rounded-full flex items-center justify-center text-on hover:bg-s3 pressable" aria-label="退出搜索"><IBack size={19} /></Button>
         <Form className="flex-1 min-w-0 flex items-center gap-2 h-11 rounded-(--r-ctl) bg-s3 px-3.5 focus-within:bg-s4 transition-colors"
           onSubmit={(e) => { e.preventDefault(); submit(q); }}>
           <ISearch size={17} className="text-mut shrink-0" />
-          <Input ref={inputRef} data-autofocus aria-label={`${label}搜索关键词`} value={q} onChange={(e) => setQ(e.target.value)} placeholder={`搜索${label}…`}
+          <Input ref={inputRef} data-autofocus aria-label={`${label}搜索关键词`} value={q}
+            onChange={(e) => {
+              const next = e.target.value;
+              setQ(next);
+              if (!next && submitted) { setSubmitted(""); results.clear(); }
+            }}
+            placeholder={`搜索${label}…`}
             className="flex-1 min-w-0 bg-transparent text-[14px] text-on placeholder-dim outline-none" />
-          {q && <Button aria-label="清空搜索" type="button" onClick={() => { results.clear(); setQ(""); setSubmitted(""); inputRef.current?.focus(); }} className="ios-icon-button ios-search-clear"><IClose size={16} /></Button>}
+          {(q || submitted) && <Button aria-label="清空搜索" type="button" onClick={() => { results.clear(); setQ(""); setSubmitted(""); inputRef.current?.focus(); }} className="ios-icon-button ios-search-clear"><IClose size={16} /></Button>}
         </Form>
       </div>
 
-      <div className="flex-1 scroll-y px-4 pt-3 pb-8">
-        {!submitted ? null : <>
+      <div className="flex-1 scroll-y pt-3 pb-8">
+        {!submitted ? (
+          !scope && searchHist.length > 0 ? (
+            <div className="mt-1 a-rise">
+              <div className="flex items-center justify-between">
+                <span className="text-[14px] font-bold text-on">搜索历史</span>
+                <Button onClick={clearSearchHist} className="text-[12px] text-dim pressable">清空</Button>
+              </div>
+              <div className="flex flex-wrap gap-2 mt-2.5">
+                {searchHist.map((h) => (
+                  <Button key={h} onClick={() => submit(h)} className="px-3.5 h-8 rounded-(--r-ctl) bg-s3 text-[13px] text-on/80 pressable">{h}</Button>
+                ))}
+              </div>
+            </div>
+          ) : null
+        ) : <>
           <div role="status" aria-live="polite" className="text-[12px] text-mut mb-2.5">
             {loading && <span className="block">{request?.page === 1 ? `正在搜索「${submitted}」…` : "正在加载更多…"}</span>}
             {result && <>「{result.keyword}」已加载 <span className="text-primary font-bold">{count}{result.total !== null ? ` / ${result.total}` : ""}</span> 条{label}</>}
@@ -84,7 +107,7 @@ export function InplaceSearch({ kind, postLabel = "吃瓜帖", scope, onOpenVide
                     <MediaCard key={post.id} title={post.title} cover={post.cover} subtitle={`${fmt(post.hot)} 次浏览`} onOpen={() => onOpenPost?.(post)} />
                   ))}
                 </div>}</FilteredContent>
-              ) : <Masonry videos={items} scopeKey={JSON.stringify([submitted, kind, scope, result.keyword, result.kind])} wide={wide} onOpen={(v) => onOpenVideo?.(v, items)} />}
+              ) : <Masonry videos={items} scopeKey={JSON.stringify([submitted, kind, scope, result.keyword, result.kind])} wide={wide} onOpen={(v, visible) => onOpenVideo?.(v, visible, result.keyword)} />}
             </> : loading ? <div className="flex justify-center py-12"><Loader label="正在搜索" className="w-8 h-8 spinner" /></div>
               : !error && <Empty icon={<ISearch size={26} />}
                 title={result && result.page < result.pages ? "已加载页面没有匹配内容" : "没有找到相关内容"}

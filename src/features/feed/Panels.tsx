@@ -1,6 +1,6 @@
 import { Button, Form, Image, Input } from "../../shared/ui/ios/controls";
 import { Loader } from "../../shared/ui/ios/effects";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, fmt, cover as imageCover } from "../../shared/api/api";
 import { handleArticleClick, sanitizeHtml } from "../../shared/lib/html";
 import { commentText } from "./commentText";
@@ -17,7 +17,12 @@ export function EpisodesPanel({ episodes, current, onPick, onClose, bare = false
   bare?: boolean;
 }) {
   const [asc, setAsc] = useState(true);
+  const gridRef = useRef<HTMLDivElement>(null);
   const list = asc ? episodes : [...episodes].reverse();
+  useLayoutEffect(() => {
+    const activeEl = gridRef.current?.querySelector<HTMLElement>('[aria-current="true"]');
+    activeEl?.scrollIntoView({ block: "nearest" });
+  }, [current, asc, episodes.length]);
   return (
     <div className="flex flex-col h-full">
       {bare ? (
@@ -30,12 +35,12 @@ export function EpisodesPanel({ episodes, current, onPick, onClose, bare = false
           <span className="text-[14px] font-bold text-on">选集</span>
           <span className="text-[12px] text-mut">共 {episodes.length} 集</span>
           <Button onClick={() => setAsc((v) => !v)} className="ml-auto text-[12px] text-primary pressable">{asc ? "倒序" : "正序"}</Button>
-          <Button onClick={onClose} aria-label="关闭" className="w-7 h-7 rounded-full bg-s3 flex items-center justify-center text-mut pressable">
+          <Button onClick={onClose} aria-label="关闭" className="w-8 h-8 min-h-0 rounded-full bg-s3 flex items-center justify-center text-mut pressable">
             <IClose size={13} />
           </Button>
         </div>
       )}
-      <div className="flex-1 scroll-y px-4 pb-4">
+      <div ref={gridRef} className="flex-1 scroll-y px-4 pb-4">
         <div className="grid grid-cols-4 gap-2">
           {list.map((e) => (
             <Button key={e.ep_num} aria-current={e.ep_num === current ? "true" : undefined} onClick={() => onPick(e.ep_num)}
@@ -115,6 +120,7 @@ export function CommentsPanel({ videoId, ep, total, kind = "video", onClose }: {
   }, [load]);
 
   const send = async () => {
+    if (kind === "post") return;
     const t = text.trim();
     if (!t || sendBusy.current) return;
     if (!user) { setLoginOpen(true); return; }
@@ -139,7 +145,7 @@ export function CommentsPanel({ videoId, ep, total, kind = "video", onClose }: {
       <div className="shrink-0 flex items-center gap-2 px-4 h-12">
         <span className="text-[14px] font-bold text-on">评论</span>
         <span className="text-[12px] text-mut">{fmt(loadedTotal ?? total)}{kind === "video" ? ` · 第 ${ep} 集` : " 条"}</span>
-        <Button onClick={onClose} aria-label="关闭" className="ml-auto w-7 h-7 rounded-full bg-s3 flex items-center justify-center text-mut pressable">
+        <Button onClick={onClose} aria-label="关闭" className="ml-auto w-8 h-8 min-h-0 rounded-full bg-s3 flex items-center justify-center text-mut pressable">
           <IClose size={13} />
         </Button>
       </div>
@@ -178,18 +184,20 @@ export function CommentsPanel({ videoId, ep, total, kind = "video", onClose }: {
         )}
       </div>
 
-      <Form className="shrink-0 flex items-center gap-2 px-3 py-2.5 bg-s2/70" onSubmit={(e) => { e.preventDefault(); send(); }}>
-        <Avatar size={30} name={user?.nickname || "我"} hue={322} />
-        <Input ref={inputRef} disabled={sending} value={text} onChange={(e) => setText(e.target.value)}
-          readOnly={!user} onClick={() => { if (!user) setLoginOpen(true); }}
-          onKeyDown={(event) => { if (!user && event.key === "Enter") { event.preventDefault(); setLoginOpen(true); } }}
-          placeholder={user ? "说点什么…" : "登录后参与评论"}
-          className="flex-1 min-w-0 h-9 rounded-(--r-ctl) bg-s4 px-3.5 text-[14px] text-on placeholder-dim outline-none focus:bg-s3" />
-        <Button type="submit" aria-label="发送评论" disabled={!text.trim() || sending}
-          className={`w-9 h-9 rounded-full flex items-center justify-center pressable ${text.trim() ? "brand-grad glow-neon" : "bg-s3 text-dim"}`}>
-          {sending ? <Loader className="w-4 h-4 spinner" /> : <ISendF size={16} />}
-        </Button>
-      </Form>
+      {kind === "video" && (
+        <Form className="shrink-0 flex items-center gap-2 px-3 py-2.5 bg-s2/70" onSubmit={(e) => { e.preventDefault(); send(); }}>
+          <Avatar size={30} name={user?.nickname || "我"} hue={322} />
+          <Input ref={inputRef} disabled={sending} value={text} onChange={(e) => setText(e.target.value)}
+            readOnly={!user} onClick={() => { if (!user) setLoginOpen(true); }}
+            onKeyDown={(event) => { if (!user && event.key === "Enter") { event.preventDefault(); setLoginOpen(true); } }}
+            placeholder={user ? "说点什么…" : "登录后参与评论"}
+            className="flex-1 min-w-0 h-9 rounded-(--r-ctl) bg-s4 px-3.5 text-[14px] text-on placeholder-dim outline-none focus:bg-s3" />
+          <Button type="submit" aria-label="发送评论" disabled={!text.trim() || sending}
+            className={`w-9 h-9 rounded-full flex items-center justify-center pressable ${text.trim() ? "brand-grad glow-neon" : "bg-s3 text-dim"}`}>
+            {sending ? <Loader className="w-4 h-4 spinner" /> : <ISendF size={16} />}
+          </Button>
+        </Form>
+      )}
     </div>
   );
 }
@@ -209,7 +217,7 @@ export function ArticlePanel({ title, html, cover, hot, onClose }: {
       <div className="shrink-0 flex items-center gap-2 px-4 h-12">
         <span className="text-[14px] font-bold text-on">图文详情</span>
         {hot ? <span className="text-[12px] text-mut">{fmt(hot)} 热度</span> : null}
-        <Button onClick={onClose} aria-label="关闭" className="ml-auto w-7 h-7 rounded-full bg-s3 flex items-center justify-center text-mut pressable">
+        <Button onClick={onClose} aria-label="关闭" className="ml-auto w-8 h-8 min-h-0 rounded-full bg-s3 flex items-center justify-center text-mut pressable">
           <IClose size={13} />
         </Button>
       </div>

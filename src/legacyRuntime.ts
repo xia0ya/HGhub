@@ -163,6 +163,11 @@ declare global {
 }
 
 function detectFlexGap() {
+  // Flexbox gap has shipped unconditionally since Chromium 84; skip the synchronous
+  // DOM layout reflow on modern Chromium/WebView2 while keeping the measured check
+  // for Safari, vendor WebViews, and legacy Chromium 66-84 targets.
+  const chrome = /(?:Chrome|Chromium)\/(\d+)/.exec(navigator.userAgent);
+  if (chrome && Number(chrome[1]) >= 85) return;
   const probe = document.createElement("div");
   probe.style.cssText = "position:absolute;left:-9999px;display:flex;flex-direction:column;row-gap:1px;visibility:hidden";
   probe.appendChild(document.createElement("div"));

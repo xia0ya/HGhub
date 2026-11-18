@@ -44,10 +44,10 @@ export function WaterfallCard({ v, onOpen, priority = false }: { v: VideoCard; o
 }
 
 export function Masonry({ videos, onOpen, wide = false, scopeKey }: {
-  videos: VideoCard[]; onOpen: (v: VideoCard) => void; wide?: boolean; gap?: string; scopeKey?: string | number;
+  videos: VideoCard[]; onOpen: (v: VideoCard, visible: VideoCard[]) => void; wide?: boolean; gap?: string; scopeKey?: string | number;
 }) {
   return <FilteredContent items={videos} scopeKey={scopeKey}>{visible => <div className={`ios-media-grid ${wide ? "is-wide" : ""}`} data-ui="media-grid">
-    {visible.map((v, index) => <WaterfallCard key={v.id} v={v} priority={index < 2} onOpen={() => onOpen(v)} />)}
+    {visible.map((v, index) => <WaterfallCard key={v.id} v={v} priority={index < 2} onOpen={() => onOpen(v, visible)} />)}
   </div>}</FilteredContent>;
 }
 

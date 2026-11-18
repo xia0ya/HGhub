@@ -25,6 +25,7 @@ export function LibraryCard({ content, onOpen, active }: { content: TvContent; o
   }, []);
   useEffect(() => {
     if (!active || !missing || !root.current) { setVisible(false); return; }
+    if (typeof IntersectionObserver !== "function") { setVisible(true); return; }
     const element = root.current;
     const observer = new IntersectionObserver(entries => setVisible(entries.some(entry => entry.isIntersecting && entry.intersectionRatio > 0)));
     observer.observe(element);

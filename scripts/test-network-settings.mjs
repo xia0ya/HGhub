@@ -235,6 +235,28 @@ try {
     assert.deepEqual(await page.evaluate(() => window.networkSettingsFixture.unknown), []);
     await context.close();
   }
+  {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    page.on("pageerror", error => report.errors.push(error.message));
+    await page.route("**/*", route => {
+      const target = new URL(route.request().url());
+      if (target.origin === new URL(origin).origin) return route.continue();
+      // html-security.ts rewrites article <img> to the local media loopback (127.0.0.1:17650/img or hg.localhost/img).
+      const isLocalImgProxy = (target.origin === "http://127.0.0.1:17650" || target.hostname === "hg.localhost") && target.pathname === "/img";
+      if (!isLocalImgProxy) report.external.push(route.request().url());
+      return route.abort();
+    });
+    for (const [label, path] of [["HTML sanitizer & SSRF link policy", "tests/html-security.html"], ["Strict security boot & persistence", "tests/security-settings.html"]]) {
+      await page.goto(`${origin}${path}`);
+      await page.waitForFunction(() => (document.querySelector("#results")?.textContent || "").trim().startsWith("{"));
+      const parsed = JSON.parse(await page.locator("#results").innerText());
+      assert.equal(parsed.failed, 0, `${label}: ${JSON.stringify(parsed)}`);
+      assert(parsed.passed > 0, `${label}: expected passing checks`);
+      report.passed.push(`${label}: ${parsed.passed} passed`);
+    }
+    await context.close();
+  }
   }
   assert.deepEqual(report.errors, []);
   assert.deepEqual(report.external, []);

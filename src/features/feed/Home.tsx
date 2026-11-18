@@ -1,6 +1,5 @@
 import { Loader } from "../../shared/ui/ios/effects";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Feed } from ".";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../shared/api/api";
 import type { VideoCard } from "../../shared/api/types";
 import { useStore } from "../../shared/model/store";
@@ -9,6 +8,9 @@ import { Empty } from "../../shared/ui/ui";
 import { Button } from "../../shared/ui/ios/controls";
 import { useContentPreferences } from "../../shared/model/contentPreferences";
 import { PreferenceStorageNotice } from "../../shared/ui/PreferenceStorageNotice";
+
+const loadFeed = () => import("./Feed");
+const Feed = lazy(loadFeed);
 
 /* Fisher-Yates 洗牌：首页第一页随机打乱，避免每次进来都停在同一个 top1 */
 function shuffle<T>(arr: T[]): T[] {
@@ -97,6 +99,7 @@ export default function Home({ active, bottomInset }: { active: boolean; bottomI
      Loaded pages and an already mounted player remain intact across navigation. */
   useEffect(() => {
     if (!active || items.length || loadingRef.current || attemptedEpoch.current === lineEpoch) return;
+    void loadFeed();
     void load(1);
   }, [active, lineEpoch, items.length, load]);
   useEffect(() => { if (active && items.length) setFeedMounted(true); }, [active, items.length]);
@@ -122,13 +125,15 @@ export default function Home({ active, bottomInset }: { active: boolean; bottomI
 
   return (
     <div className="absolute inset-0 bg-black flex flex-col">
-      {storageError && <div className="shrink-0 bg-bg px-3 pb-2" style={{ paddingTop: "max(8px, var(--sat, env(safe-area-inset-top, 0px)))" }}>
+      {storageError && <div className="shrink-0 bg-bg px-3 pb-2" style={{ paddingTop: "var(--sat, 8px)" }}>
         <PreferenceStorageNotice />
       </div>}
       <div className="relative flex-1 min-h-0">
       {ids.length > 0 && (active || feedMounted) ? (
-        <Feed videoIds={ids} mode="home" active={active} bottomInset={bottomInset} onBlocked={onBlocked}
-          onNearEnd={() => { if (!loading && !done && Date.now() >= retryAt.current) load(page + 1); }} />
+        <Suspense fallback={<div className="absolute inset-0 flex items-center justify-center"><Loader className="w-9 h-9 spinner" /></div>}>
+          <Feed videoIds={ids} mode="home" active={active} bottomInset={bottomInset} onBlocked={onBlocked}
+            onNearEnd={() => { if (!loading && !done && Date.now() >= retryAt.current) load(page + 1); }} />
+        </Suspense>
       ) : hiddenCount > 0 ? (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-bg px-5 pb-24">
           <Empty icon={<ISearch size={26} />} title="已隐藏不感兴趣的内容"

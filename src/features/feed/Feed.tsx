@@ -6,12 +6,13 @@ import { api, cover, isMobile, logLine } from "../../shared/api/api";
 import type { Detail, Episode, PlayInfo, Post, VideoCard } from "../../shared/api/types";
 import { useStore } from "../../shared/model/store";
 import { Img } from "../../shared/ui/ui";
-import { setBackHandler } from "../../shared/lib/back";
+import { registerOverlayBack } from "../../shared/lib/back";
 import { PlaybackLock, VideoSurface, createPlaybackClock, type VideoHandle } from "../playback";
 import { tracePlayback } from "../../shared/diagnostics/playbackDiagnostics";
 import { useContentPreferences } from "../../shared/model/contentPreferences";
 import { TagBlockMenu } from "../../shared/ui/TagBlockMenu";
 import { PreferenceStorageNotice } from "../../shared/ui/PreferenceStorageNotice";
+import { InplaceSearch } from "../search/InplaceSearch";
 import MobileHoldGuide from "./MobileHoldGuide";
 import { useFsIdle } from "./fsIdle";
 import { useMobileHoldGuide } from "./useMobileHoldGuide";
@@ -56,6 +57,7 @@ export default function Feed({
   const [tagMenu, setTagMenu] = useState(false);
   const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [tagErrors, setTagErrors] = useState<Record<string, string>>({});
+  const [originEpoch, setOriginEpoch] = useState(0);
   const playRequests = useRef(new Map<string, Promise<PlayInfo>>());
   const requestPlay = useCallback((id: number, episode: number) => {
     const key = `${accountScope}:${store.lineEpoch}:${id}:${episode}`;
@@ -71,10 +73,11 @@ export default function Feed({
   }, [accountScope, store.lineEpoch]);
 
   const { details, setDetails, detailsRef, posts, setPosts, requestDetail, effectiveVideoIds } = useFeedDetails({
-    videoIds, mode, kind, accountScope, lineEpoch: store.lineEpoch, filtering, revision,
+    videoIds, mode, kind, accountScope, lineEpoch: store.lineEpoch, originEpoch, filtering, revision,
     blockReason, checked, tagErrors,
   });
 
+  const playerRootRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<VideoHandle>(null);
   const holdTargetRef = useRef<HTMLDivElement>(null);
@@ -92,6 +95,7 @@ export default function Feed({
   const [vsize, setVsize] = useState({ key: "", w: 0, h: 0 });
   const [paused, setPaused] = useState(false);
   const [controlsLocked, setControlsLocked] = useState(false);
+  const [searching, setSearching] = useState(false);
   const [rate, setRate] = useState(1);
   const [waiting, setWaiting] = useState(false);
   const [err, setErr] = useState("");
@@ -107,13 +111,14 @@ export default function Feed({
   const lastSaveRef = useRef(0);
   const theater = store.theater;
   const setTheater = store.setTheater;
-  const fs = store.fs;
+  const fs = active && store.fs;
   const clean = store.clean;
   const setClean = store.setClean;
   const setFs = store.setFs;
 
+  const [barScrubbing, setBarScrubbing] = useState(false);
   /* 控件闲置隐藏：桌面 2.8s；移动全屏按设置秒数（#146-3） */
-  const { idle, setIdle, wake, arm } = useFsIdle(isDesktop, fs, paused, store.fsIdleSecs, boxRef);
+  const { idle, setIdle, wake, arm } = useFsIdle(isDesktop, fs, paused, store.fsIdleSecs, boxRef, barScrubbing);
 
   const episodesByVideo = useMemo(() => {
     const counts: Record<number, number> = {};
@@ -133,7 +138,7 @@ export default function Feed({
     idsRef, index, renderIndex, fullscreen, vpLandscape, portraitFit, setPortraitFit,
     onScroll, go, stepDir, canStep, toggleFull, enterFs, exitFs,
   } = useFeedViewport({
-    boxRef, videoRef, pinchRef, videoIds, effectiveVideoIds, startIndex, mode, kind, active,
+    playerRootRef, boxRef, videoRef, pinchRef, videoIds, effectiveVideoIds, startIndex, mode, kind, active,
     isItemAllowed, isDesktop, fs, setFs, setClean, paused, wake, swipeEp, epMap, setEpMap,
     episodesByVideo, setPanel, onNearEnd,
   });
@@ -155,6 +160,11 @@ export default function Feed({
   const openTag = (tag: string) => { closePanels(); store.push({ kind: "tag", tag, name: tag }); };
 
   useEffect(() => { setTagMenu(false); }, [curId, store.lineEpoch, accountScope]);
+  useEffect(() => { if (!active) setSearching(false); }, [active]);
+  useEffect(() => {
+    store.setLocked(active && controlsLocked);
+    return () => { if (active) store.setLocked(false); };
+  }, [active, controlsLocked, store.setLocked]);
   useEffect(() => { if (blocked && mode === "home" && active) onBlocked?.(curId); }, [blocked, mode, active, curId, onBlocked]);
   useEffect(() => { if (!allowed) { setPanel(null); setTagMenu(false); } }, [allowed]);
 
@@ -188,20 +198,40 @@ export default function Feed({
     && !!playUrl && duration > 0 && !err && !panel && !tagMenu && !controlsLocked;
 
   useEffect(() => {
-    const retry = () => {
+    const onProxyChanged = () => {
       setErr("");
-      setWaiting(true);
       // Resolved media is retried in VideoSurface. Only an unresolved API call
       // needs another lookup, so a working stream keeps its episode and position.
-      if (!playUrl) setProxyRetry(value => value + 1);
+      if (!playUrl) {
+        if (active) setWaiting(true);
+        setProxyRetry(value => value + 1);
+      } else if (active) {
+        setWaiting(true);
+      }
     };
-    window.addEventListener("hg:proxy-changed", retry);
-    window.addEventListener("hg:line-changed", retry);
+    const onLineChanged = () => {
+      setOriginEpoch(value => value + 1);
+      // Keep an actively playing, healthy stream uninterrupted while purging all
+      // prefetched/inactive/errored URLs from the previous line.
+      if (active && playingKey === playKey && !err && playUrl) {
+        setPlayUrls(prev => (prev[playKey] ? { [playKey]: prev[playKey] } : {}));
+        setHevcUrls(prev => (prev[playKey] ? { [playKey]: prev[playKey] } : {}));
+        return;
+      }
+      setPlayUrls({});
+      setHevcUrls({});
+      setPlayingKey("");
+      setErr("");
+      if (active) setWaiting(true);
+      setProxyRetry(value => value + 1);
+    };
+    window.addEventListener("hg:proxy-changed", onProxyChanged);
+    window.addEventListener("hg:line-changed", onLineChanged);
     return () => {
-      window.removeEventListener("hg:proxy-changed", retry);
-      window.removeEventListener("hg:line-changed", retry);
+      window.removeEventListener("hg:proxy-changed", onProxyChanged);
+      window.removeEventListener("hg:line-changed", onLineChanged);
     };
-  }, [playUrl]);
+  }, [active, playUrl, playingKey, playKey, err]);
 
   useEffect(() => { videoRef.current?.trace("page.active", { active, view: mode, video_id: curId, episode: curEp }); }, [active, mode, curId, curEp]);
   const episodes = detail?.episodes || [];
@@ -244,13 +274,13 @@ export default function Feed({
         title: post?.title || "",
         cover: post?.cover || "",
         desc: post?.content || post?.desc || "",
-        author: "吃瓜",
-        authorId: -1,
+        author: post?.author?.name || "吃瓜",
+        authorId: post?.author?.id || -1,
         tags: post?.tags || [],
         score: 0,
-        like: 0,
+        like: post?.counts?.like ?? 0,
         comment: post?.counts?.comment ?? 0,
-        collect: 0,
+        collect: post?.counts?.collect ?? 0,
         episodes: [] as Episode[],
       }
     : {
@@ -279,10 +309,11 @@ export default function Feed({
     scrub, barRef, barPct, onDown, onMove, onUp, onBarDown, onBarMove, onBarUp,
   } = useFeedTouchGestures({
     boxRef, videoRef, pinchRef, playbackClock, isDesktop, active, controlsLocked, showHoldGuide,
-    rotated, fs, clean, setClean, idle, setIdle, arm, swipeEp, kind, curId, epMap, setEpMap,
+    rotated, fs, clean, setClean, idle, setIdle, arm, wake, swipeEp, kind, curId, epMap, setEpMap,
     episodesLength: episodes.length, effectiveLength: effectiveVideoIds.length, go,
     duration, playUrl, playKey, openTagMenu, setPanel, setTagMenu, toast,
   });
+  useEffect(() => { setBarScrubbing(barPct !== null); }, [barPct]);
 
   const {
     liked, collected, likePending, collectPending, followPending, heartBurst,
@@ -300,12 +331,12 @@ export default function Feed({
 
   /* 若用户在视频首帧宽高解析出来前已点进全屏，解析出横屏后自动补发横屏方向请求 */
   useEffect(() => {
-    if (isDesktop || !fs || !landscapeVideo) return;
+    if (!active || isDesktop || !fs || !landscapeVideo) return;
     try { void invoke("set_orientation", { landscape: true }); } catch { /* ignore */ }
     try {
       (screen.orientation as unknown as { lock?: (o: string) => Promise<void> })?.lock?.("landscape")?.catch(() => {});
     } catch { /* ignore */ }
-  }, [isDesktop, fs, landscapeVideo]);
+  }, [active, isDesktop, fs, landscapeVideo]);
 
   /* With filtering enabled, details are the gate: no media is requested before tags settle. */
   useEffect(() => {
@@ -356,11 +387,11 @@ export default function Feed({
     requestPlay(curId, curEp)
       .then((info) => {
         if (!alive || !isCurrentPlayback()) return;
-        const streamUrl = info?.streams?.main || info?.video_url;
         const hevcStream = info?.streams?.hevc || info?.video_url_hevc || "";
+        const streamUrl = info?.streams?.main || info?.video_url || hevcStream;
         const raw = info as unknown as Record<string, unknown>;
         const streams = (raw.streams ?? {}) as Record<string, unknown>;
-        const streamKind = streams.main ? "main" : info?.video_url ? "video_url" : streams.hevc ? "hevc" : "-";
+        const streamKind = streams.main ? "main" : info?.video_url ? "video_url" : hevcStream ? "hevc" : "-";
         let host = "?";
         try { host = new URL(streamUrl || "").host || "?"; } catch { /* 空地址或非 URL */ }
         logLine(
@@ -393,8 +424,8 @@ export default function Feed({
     requestPlay(curId, nextEpisode)
       .then((info) => {
         if (!alive || !playGuard.current.allowed || playGuard.current.permissionKey !== permissionKey) return;
-        const u = info?.streams?.main || info?.video_url;
         const h = info?.streams?.hevc || info?.video_url_hevc || "";
+        const u = info?.streams?.main || info?.video_url || h;
         if (u) setPlayUrls((m) => ({ ...m, [key]: u }));
         if (h) setHevcUrls((m) => ({ ...m, [key]: h }));
       })
@@ -428,8 +459,8 @@ export default function Feed({
         }
         const info = await requestPlay(nextId, 1);
         if (!stillRelevant()) return;
-        const url = info?.streams?.main || info?.video_url;
         const hevc = info?.streams?.hevc || info?.video_url_hevc || "";
+        const url = info?.streams?.main || info?.video_url || hevc;
         if (url) setPlayUrls(previous => ({ ...previous, [nextKey]: url }));
         if (hevc) setHevcUrls(previous => ({ ...previous, [nextKey]: hevc }));
       } catch {
@@ -464,42 +495,47 @@ export default function Feed({
 
   /* 键盘 */
   useEffect(() => {
-    if (!active || !allowed || controlsLocked || showHoldGuide) return;
+    if (!active || !allowed || controlsLocked || showHoldGuide || tagMenu || searching) return;
     const seekRelative = (delta: number) => {
       const current = videoRef.current?.el()?.currentTime ?? 0;
       videoRef.current?.seek(Math.max(0, current + delta), "keyboard_shortcut");
     };
     const fn = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement;
-      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
-      if (panel) { if (e.key === "Escape") setPanel(null); return; }
+      if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented || e.isComposing) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      if (panel) { if (e.key === "Escape" && !e.repeat) setPanel(null); return; }
+      if (e.key === "ArrowLeft") { e.preventDefault(); seekRelative(-5); return; }
+      if (e.key === "ArrowRight") { e.preventDefault(); seekRelative(5); return; }
+      if (e.repeat) return;
       switch (e.key) {
         case "ArrowDown": e.preventDefault(); stepDir(1); break;
         case "ArrowUp": e.preventDefault(); stepDir(-1); break;
-        case " ": e.preventDefault(); videoRef.current?.toggle(); break;
-        case "ArrowLeft": e.preventDefault(); seekRelative(-5); break;
-        case "ArrowRight": e.preventDefault(); seekRelative(5); break;
+        case " ":
+          if (t?.closest?.('button, summary, [role="button"], a[href], select')) return;
+          e.preventDefault();
+          videoRef.current?.toggle();
+          break;
         case "f": case "F": toggleFull(); break;
         case "t": case "T": setTheater((v) => !v); break;
         case "m": case "M": setMuted((v) => !v); break;
         case "l": case "L": void onLike(); break;
         case "s": case "S": void onFav(); break;
         case "c": case "C": setPanel("comments"); break;
-        case "e": case "E": setPanel("episodes"); break;
+        case "e": case "E": if (kind === "video") setPanel("episodes"); break;
         default: break;
       }
     };
     window.addEventListener("keydown", fn);
     return () => window.removeEventListener("keydown", fn);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, allowed, controlsLocked, showHoldGuide, panel, index, stepDir, accountScope, curEp, kind, liked, collected, likePending, collectPending]);
+  }, [active, allowed, controlsLocked, showHoldGuide, tagMenu, searching, panel, index, stepDir, accountScope, curEp, kind, liked, collected, likePending, collectPending]);
 
-  /* 安卓返回键：面板打开时先关面板 */
+  /* 安卓返回键：面板打开时先关面板（按活跃实例栈式注册，不覆盖其他页面拦截器） */
   useEffect(() => {
-    if (!panel) { setBackHandler(null); return undefined; }
-    setBackHandler(() => { setPanel(null); return true; });
-    return () => setBackHandler(null);
-  }, [panel]);
+    if (!active || !panel) return undefined;
+    return registerOverlayBack(() => { setPanel(null); return true; });
+  }, [active, panel]);
 
   const lockControls = () => { setPanel(null); setControlsLocked(true); };
   const pickEp = (ep: number) => {
@@ -539,6 +575,7 @@ export default function Feed({
 
   return (
     <div
+      ref={playerRootRef}
       className={`hg-player-ui ${rotated ? "fs-landscape" : (!isDesktop && fs ? "fs-immersive" : "absolute inset-0")} overflow-hidden bg-black player-root ${controlsLocked ? "is-locked" : ""} ${isDesktop ? "player-surface" : ""} ${theater ? "is-theater" : ""} ${isDesktop && idle ? "is-idle" : ""}`}
       data-clean={clean}
       inert={!active || undefined}
@@ -575,8 +612,8 @@ export default function Feed({
                     onPointerDown={onDown} onPointerMove={onMove} onPointerUp={(e) => onUp(false, e)} onPointerCancel={(e) => onUp(true, e)} onLostPointerCapture={(e) => onUp(true, e)}>
                     {/* 老 WebView 不认识 inset 简写；四边写法保证缩放舞台铺满（#138）。 */}
                     <div style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, transform: isDesktop ? undefined : `translate3d(${zoom.x}px, ${zoom.y}px, 0) scale(${zoom.s})`, transformOrigin: "center center", transition: isDesktop || zoom.g ? "none" : "transform .18s ease-out" }}>
-                      <VideoSurface ref={videoRef} src={playUrl} poster={posterUrl} autoPlay active={active && !tagMenu && !showHoldGuide} muted={muted}
-                        diagnosticContext={{ active: active && !tagMenu && !showHoldGuide, view: mode, kind, video_id: curId, episode: curEp }}
+                      <VideoSurface ref={videoRef} src={playUrl} poster={posterUrl} autoPlay active={active && !tagMenu && !showHoldGuide && !searching} muted={muted}
+                        diagnosticContext={{ active: active && !tagMenu && !showHoldGuide && !searching, view: mode, kind, video_id: curId, episode: curEp }}
                         volume={volume} rate={effRate}
                         measurementKey={measurementKey}
                         fit={!isDesktop && landscapeVideo && !fs && !vpLandscape ? portraitFit : "contain"}
@@ -643,7 +680,8 @@ export default function Feed({
           holdSpeed={holdSpeed} holdSlow={holdSlow} speedLock={speedLock} setSpeedLock={setSpeedLock} lockArmed={lockArmed}
           muted={muted} setMuted={setMuted} volume={volume} setVolume={setVolume} swipeEp={swipeEp} setSwipeEp={setSwipeEp}
           playKey={playKey} curId={curId} curEp={curEp} index={index} effectiveLength={effectiveVideoIds.length}
-          kind={kind} meta={meta} episodes={episodes} related={related} follows={store.follows} followPending={followPending}
+          kind={kind} meta={meta} likeCount={likeCount} collectCount={collectCount}
+          episodes={episodes} related={related} follows={store.follows} followPending={followPending}
           post={post} articleHtml={articleHtml} panel={panel} setPanel={setPanel}
           barPct={barPct} onBarDown={onBarDown} onBarMove={onBarMove} onBarUp={onBarUp}
           pickEp={pickEp} go={go} togglePip={togglePip} lockControls={lockControls} toggleFull={toggleFull} exitFs={exitFs}
@@ -654,11 +692,17 @@ export default function Feed({
       <FeedMobileTopTools
         isDesktop={isDesktop} controlsLocked={controlsLocked} active={active} fs={fs} idle={idle}
         rotated={rotated} clean={clean} muted={muted} setMuted={setMuted}
-        lockControls={lockControls} onSearchTab={() => store.setTab("search")}
+        lockControls={lockControls}
+        onSearchTab={() => { if (mode === "context") setSearching(true); else store.setTab("search"); }}
       />
+      {searching && active && (
+        <InplaceSearch kind={kind} wide={isDesktop} onClose={() => setSearching(false)}
+          onOpenVideo={(v, list, kw) => store.push({ kind: "feed", videoIds: list.map(x => x.id), index: list.findIndex(x => x.id === v.id), title: kw ? `搜索 · ${kw}` : "搜索" })}
+          onOpenPost={(p) => store.push({ kind: "post", id: p.id })} />
+      )}
       <TagBlockMenu open={active && tagMenu} tags={meta.tags} onClose={() => setTagMenu(false)} onSettings={openPreferences} />
       {!isDesktop && <MobileHoldGuide open={showHoldGuide} onClose={holdGuide.dismiss} target={holdTargetRef} bottomInset={bottomInset} />}
-      {controlsLocked && <PlaybackLock active={active} onUnlock={() => { setControlsLocked(false); wake(); }} />}
+      {controlsLocked && <PlaybackLock active={active} rotated={rotated} immersive={!isDesktop && fs && !rotated} onUnlock={() => { setControlsLocked(false); wake(); }} />}
     </div>
   );
 }

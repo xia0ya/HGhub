@@ -30,12 +30,15 @@ fn normalize_play_info(info: &mut Value) {
             }
         }
     }
+    if non_empty(obj.get("video_url")).is_none() {
+        if let Some(hevc) = non_empty(obj.get("video_url_hevc")).cloned() {
+            obj.insert("video_url".into(), hevc);
+        }
+    }
 }
 
 fn has_play_url(info: &Value) -> bool {
-    info.get("video_url")
-        .and_then(|v| v.as_str())
-        .is_some_and(|s| !s.trim().is_empty())
+    non_empty(info.get("video_url")).is_some() || non_empty(info.get("video_url_hevc")).is_some()
 }
 
 #[tauri::command]
@@ -104,4 +107,26 @@ pub async fn api_comment_send(
         _ => format!("/api/videos/{id}/comments?ep={ep}"),
     };
     state.account_request("POST", &path, Some(body), None, None).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{has_play_url, normalize_play_info};
+    use serde_json::json;
+
+    #[test]
+    fn hevc_only_stream_is_recognized_as_playable_fallback() {
+        let mut info = json!({
+            "id": "42",
+            "ep": 1,
+            "streams": {
+                "main": "",
+                "hevc": "https://cdn.example/video/hevc.m3u8"
+            }
+        });
+        normalize_play_info(&mut info);
+        assert!(has_play_url(&info));
+        assert_eq!(info["video_url_hevc"], "https://cdn.example/video/hevc.m3u8");
+        assert_eq!(info["video_url"], "https://cdn.example/video/hevc.m3u8");
+    }
 }

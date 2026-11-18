@@ -64,7 +64,17 @@ export default function BrowsePage({ onOpen, active=true }: { onOpen: (content: 
         }
         if(current()){
           setItems(previous=>{const map=new Map((request.page===1?[]:previous).map(item=>[contentKey(item),item]));for(const item of added)map.set(contentKey(item),item);return [...map.values()];});
-          setDone(finished);setRetryable(retryCount);candidates.current=pending;seenPages.current=pages;nextPage.current=page+1;fulfilled.current=request;
+          setDone(finished);
+          if(channel==="posts"){
+            const addedKeys=new Set(added.map(contentKey));
+            const mergedCandidates=[...new Map([...(request.page===1?[]:candidates.current),...pending].filter(c=>!addedKeys.has(contentKey(c))).map(c=>[contentKey(c),c])).values()];
+            candidates.current=mergedCandidates;
+            setRetryable(prev=>request.page===1?retryCount:prev+retryCount);
+          }else{
+            candidates.current=[];
+            setRetryable(0);
+          }
+          seenPages.current=pages;nextPage.current=page+1;fulfilled.current=request;
         }
       }catch(e){if(current())setError(String(e));}finally{if(current())setBusy(false);}
     })(); return()=>{disposed=true;seq.current++;};
@@ -76,7 +86,12 @@ export default function BrowsePage({ onOpen, active=true }: { onOpen: (content: 
       const token=++seq.current, key=route;setBusy(true);setError("");
       const current=()=>token===seq.current&&routeRef.current===key&&activeRef.current;
       try{const result=await qualifyVisiblePosts(candidates.current,{source,isCurrent:current,allowed:c=>!prefsRef.current.blockReason(c.tags)},true);
-        if(current()){setItems(prev=>[...new Map([...prev,...result.items].map(c=>[contentKey(c),c])).values()]);setRetryable(result.retryable);}}
+        if(current()){
+          const resolvedKeys=new Set(result.items.map(contentKey));
+          candidates.current=candidates.current.filter(c=>!resolvedKeys.has(contentKey(c)));
+          setItems(prev=>[...new Map([...prev,...result.items].map(c=>[contentKey(c),c])).values()]);
+          setRetryable(result.retryable);
+        }}
       catch(e){if(current())setError(String(e));}
       finally{if(current())setBusy(false);}return;
     }

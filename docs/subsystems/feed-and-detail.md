@@ -51,7 +51,8 @@ Feed 负责列表播放页的条目位置、详情/帖子读取、标签门、�
 7. `requestPlay(id, episode)` 的 key 是
    `` `${accountScope}:${lineEpoch}:${id}:${episode}` ``，最多缓存 12 个 Promise。
    当前集开始播放后，才预取下一集的地址；下一部视频还要先通过详情/标签检查。
-8. 评论面板使用 `api.comments` 或 `api.postComments`，选集使用当前 `detail.episodes`，
+8. 评论面板使用 `api.comments` 或 `api.postComments`（仅短剧开放评论发送，帖子评论只读，
+   不向短剧接口串写），选集使用当前 `detail.episodes`，
    详情面板显示作者/标签/相关推荐。桌面端停靠 `desktop-dock-panel`，移动端使用
    `Sheet`；面板本身不在 Feed 之外维护第二套详情缓存。
 9. 相关推荐只在 `panel === "detail"` 时调用 `api.related`，缓存键是

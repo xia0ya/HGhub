@@ -7,6 +7,7 @@ export type PinchState = { d0: number; mx0: number; my0: number; s0: number; x0:
 export type FeedPanel = "episodes" | "comments" | "article" | "detail" | null;
 
 type Args = {
+  playerRootRef: RefObject<HTMLDivElement | null>;
   boxRef: RefObject<HTMLDivElement | null>;
   videoRef: RefObject<VideoHandle | null>;
   pinchRef: RefObject<PinchState | null>;
@@ -33,7 +34,7 @@ type Args = {
 };
 
 export function useFeedViewport({
-  boxRef, videoRef, pinchRef, videoIds, effectiveVideoIds, startIndex, mode, kind, active, isItemAllowed,
+  playerRootRef, boxRef, videoRef, pinchRef, videoIds, effectiveVideoIds, startIndex, mode, kind, active, isItemAllowed,
   isDesktop, fs, setFs, setClean, paused, wake, swipeEp, epMap, setEpMap, episodesByVideo, setPanel, onNearEnd,
 }: Args) {
   const [position, setPosition] = useState(() => ({ id: videoIds[startIndex], index: startIndex }));
@@ -130,18 +131,23 @@ export function useFeedViewport({
   }, [boxRef, pinchRef, effectiveVideoIds.length, onNearEnd, resolveSwipe, fs, mode, renderIndex]);
 
   const go = useCallback((delta: number) => {
+    if (!effectiveVideoIds.length) return;
+    const next = Math.max(0, Math.min(effectiveVideoIds.length - 1, index + delta));
+    if (fs) {
+      resolveSwipe(next);
+      return;
+    }
     const el = boxRef.current;
     if (!el) return;
-    const next = Math.max(0, Math.min(effectiveVideoIds.length - 1, index + delta));
     el.scrollTo({ top: next * el.clientHeight, behavior: "smooth" });
-  }, [boxRef, index, effectiveVideoIds.length]);
+  }, [boxRef, fs, index, effectiveVideoIds.length, resolveSwipe]);
 
   /* 统一的上下切换：swipeEp 开启且为多集视频时优先切集，否则切剧。
      桌面端键盘 ↑↓ 与右侧按钮都走这里，和移动端上下划手势保持一致。 */
   const stepDir = useCallback((dir: number) => {
     if (swipeEp && kind === "video" && curId !== undefined) {
       const ep = epMap[curId] || 1;
-      const want = dir === 1 ? (totalEpisodes === 0 || ep < totalEpisodes ? ep + 1 : 0) : (ep > 1 ? ep - 1 : 0);
+      const want = dir === 1 ? (totalEpisodes > 1 && ep < totalEpisodes ? ep + 1 : 0) : (ep > 1 ? ep - 1 : 0);
       if (want) {
         setEpMap((m) => ({ ...m, [curId]: want }));
         setPanel(null);
@@ -154,7 +160,7 @@ export function useFeedViewport({
   const canStep = useCallback((dir: number) => {
     if (swipeEp && kind === "video" && curId !== undefined) {
       const ep = epMap[curId] || 1;
-      if (dir === 1 ? (totalEpisodes === 0 || ep < totalEpisodes) : ep > 1) return true;
+      if (dir === 1 ? (totalEpisodes > 1 && ep < totalEpisodes) : ep > 1) return true;
     }
     const next = index + dir;
     return next >= 0 && next < effectiveVideoIds.length;
@@ -167,11 +173,11 @@ export function useFeedViewport({
   }, []);
 
   const toggleFull = useCallback(() => {
-    const el = boxRef.current?.parentElement;
+    const el = playerRootRef.current ?? boxRef.current?.parentElement;
     if (!el) return;
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     else el.requestFullscreen().catch(() => {});
-  }, [boxRef]);
+  }, [playerRootRef, boxRef]);
 
   /* 进出全屏：iOS 会在这时把播放打断，过渡期多补几次 play()（用户主动暂停时不恢复） */
   const pausedRef = useRef(paused);
@@ -218,7 +224,7 @@ export function useFeedViewport({
     setFs(false);
   }, [setClean, setFs]);
 
-  useFsOrientation(fs, isDesktop, keepAlive);
+  useFsOrientation(fs, isDesktop, keepAlive, active);
 
   /* 系统真旋转了（iOS 原生请求成功后），CSS 就不再转 90°；
      物理横置手机时自动进入全屏，竖回时自动退出全屏（对齐 LNPANDY 版）。 */

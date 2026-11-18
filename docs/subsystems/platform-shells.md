@@ -74,8 +74,9 @@ loopback、Windows 的自定义标题栏与注册表代理判断、Android 的 W
 1. WebKitGTK 4.1 默认没有 MediaSource，hls.js 用不上；`<video>` 交给 GStreamer，而 GStreamer
    不认 `hg://`。`setup` 调 `linux_http::start()`，在 `127.0.0.1:17650` 起一个只服务
    `/img`、`/hls`、`/seg` 的 HTTP 代理。
-2. `linux_http::serve()` 只接受 `GET/HEAD`，单线程处理每个连接，读/写超时 30 秒；只处理
-   单个、无 `If-Range` 的 `Range`，HEAD 保留表示长度但不发 body。响应头只保留一份
+2. `linux_http::serve()` 只接受 `GET/HEAD` 且要求唯一合法 `Host` 与至多一个合法 `Origin`，
+   单线程处理每个连接，读/写超时 30 秒；只处理单个、无 `If-Range` 的 `Range`，
+   HEAD（含错误响应）保留表示长度但不发 body。响应头只保留一份
    `Content-Length`/CORS，并强制 `Connection: close`。
 3. `linux_webview::configure()` 在 WebKit 的 `WebsiteDataManager` 上设置 `NoProxy`。API/CDN
    仍由 Rust 按用户代理访问；这只防止 127.0.0.1 媒体请求被 GNOME 代理二次转发。
@@ -122,6 +123,12 @@ loopback、Windows 的自定义标题栏与注册表代理判断、Android 的 W
    lightningcss 压缩，并追加 `src/styles/legacy-webview.css` 的几何回退。标准入口
    `src/main.tsx` 与 TV 入口 `src/tv/bootstrap.tsx` 都在首个成功 commit 调
    `markStartupReady()` 解除看门狗；协议未签署不算启动失败。
+7. 冷启动无闪烁链路：原生窗口/系统启动屏（`tauri.conf.json`、`patch-android-splash.mjs`、
+   `patch-ios-splash.mjs`）、`index.html` 的 `html[data-hg-launching]` 背景锁与 `.hg-launch`
+   统一固定为 `#071218`，阻止外链 CSS 在 React 挂载前把 `body` 刷成亮色 `#eeece7` 或暗灰底。
+   `StartupGate` 首帧独占提交合成线程动画，下一帧再并发挂载已分离 `Feed`/`hls.js` 的业务壳，
+   待入场时间满足且底层界面提交（`contentReady` 或超时兜底）后再释放 `data-hg-launching`、同步
+   `meta[name="theme-color"]` 并淡出覆盖层。
 
 ## 状态转换
 

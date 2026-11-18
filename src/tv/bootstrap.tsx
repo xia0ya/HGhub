@@ -12,10 +12,13 @@ installRemoteController();
 installTvDisplay();
 document.documentElement.classList.remove("theme-light");
 installPlaybackPageEvents();
-void initPlaybackLog();
 function TvStartup(){
   // Mounting the gate is startup success; agreement acceptance can take minutes.
-  useEffect(()=>{markStartupReady();},[]);
+  useEffect(()=>{
+    markStartupReady();
+    const frame=window.requestAnimationFrame(()=>{void initPlaybackLog();});
+    return()=>window.cancelAnimationFrame(frame);
+  },[]);
   return <StartupGate registerBack={registerStartupBack}><TvProvider><TvApp/></TvProvider></StartupGate>;
 }
 createRoot(document.getElementById("root")!).render(<TvStartup/>);

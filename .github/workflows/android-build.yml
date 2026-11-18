@@ -115,8 +115,10 @@ jobs:
 
       - name: 编译 APK（按 ABI 分包）
         run: |
-          if [ "${{ inputs.quick }}" = "true" ] || [ "${{ inputs.platforms }}" = "android-arm64" ]; then
+          if [ "${{ inputs.platforms }}" = "android-arm64" ]; then
             TARGETS="aarch64"
+          elif [ "${{ inputs.quick }}" = "true" ]; then
+            TARGETS="aarch64 armv7"
           else
             TARGETS="aarch64 armv7 x86_64"
           fi

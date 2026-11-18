@@ -6,7 +6,6 @@ import { isMobile, selfTest } from "../shared/api/api";
 import { addPluginListener, invoke } from "@tauri-apps/api/core";
 import { runBack } from "../shared/lib/back";
 import Home from "../features/feed/Home";
-import { Feed } from "../features/feed";
 import LoginModal from "../features/account/LoginModal";
 import { ToastHost } from "../shared/ui/ui";
 import { DesktopRail, DesktopTitleBar } from "./shell/DesktopChrome";
@@ -15,6 +14,9 @@ import { tracePlayback } from "../shared/diagnostics/playbackDiagnostics";
 import { IGrid, IGridF, IHome, IHomeF, ISearch, IUser, IUserF } from "../shared/ui/icons";
 
 // Local chunks load on first visit; visited tabs stay mounted as before.
+// Feed (+ hls.js) is separated from the initial shell so cold start mounts chrome and
+// starts app_boot / autoLine / api_feed before compiling the 524 kB media engine.
+const Feed = lazy(() => import("../features/feed/Feed"));
 const Search = lazy(() => import("../features/search/Search"));
 const RankPage = lazy(() => import("../features/search/Search").then(module => ({ default: module.RankPage })));
 const Category = lazy(() => import("../features/category/Category"));
@@ -93,7 +95,7 @@ function StackPageContent({ page, onBack, wide, top, bottomInset, loginOpen }: {
 }
 
 /* ============ 应用主体 ============ */
-function MainTabs({ wide, pageActive, bottomInset }: { wide: boolean; pageActive: boolean; bottomInset: number }) {
+function MainTabs({ wide, pageActive, covered, bottomInset }: { wide: boolean; pageActive: boolean; covered: boolean; bottomInset: number }) {
   const { tab } = useStore();
   const [visited, setVisited] = useState<ReadonlySet<Tab>>(() => new Set());
   useEffect(() => {
@@ -102,16 +104,17 @@ function MainTabs({ wide, pageActive, bottomInset }: { wide: boolean; pageActive
   const mounted = (key: Tab) => visited.has(key) || (pageActive && tab === key);
   const visible = (key: Tab) => tab === key ? `absolute inset-0 ${key === "home" ? "" : "ios-tab-active"}` : "absolute inset-0 hidden pointer-events-none";
   // First visits mount on demand; subsequent switches preserve queries, scroll and playback state.
+  // DialogFrame's syncBackground() owns modal inertness so portals inside fullscreenElement never inherit ancestor inert.
   return <>
-    <div className={visible("home")} inert={!pageActive || tab !== "home"} aria-hidden={!pageActive || tab !== "home"}>{mounted("home") && <Home active={pageActive && tab === "home"} bottomInset={bottomInset} />}</div>
-    <div className={visible("search")} inert={!pageActive || tab !== "search"} aria-hidden={!pageActive || tab !== "search"}>{mounted("search") && <Suspense fallback={<PageLoading />}><Search active={pageActive && tab === "search"} wide={wide} /></Suspense>}</div>
-    <div className={visible("category")} inert={!pageActive || tab !== "category"} aria-hidden={!pageActive || tab !== "category"}>{mounted("category") && <Suspense fallback={<PageLoading />}><Category wide={wide} active={pageActive && tab === "category"} /></Suspense>}</div>
-    <div className={visible("profile")} inert={!pageActive || tab !== "profile"} aria-hidden={!pageActive || tab !== "profile"}>{mounted("profile") && <Suspense fallback={<PageLoading />}><Profile wide={wide} /></Suspense>}</div>
+    <div className={visible("home")} inert={covered || tab !== "home"} aria-hidden={!pageActive || tab !== "home"}>{mounted("home") && <Home active={pageActive && tab === "home"} bottomInset={bottomInset} />}</div>
+    <div className={visible("search")} inert={covered || tab !== "search"} aria-hidden={!pageActive || tab !== "search"}>{mounted("search") && <Suspense fallback={<PageLoading />}><Search active={pageActive && tab === "search"} wide={wide} /></Suspense>}</div>
+    <div className={visible("category")} inert={covered || tab !== "category"} aria-hidden={!pageActive || tab !== "category"}>{mounted("category") && <Suspense fallback={<PageLoading />}><Category wide={wide} active={pageActive && tab === "category"} /></Suspense>}</div>
+    <div className={visible("profile")} inert={covered || tab !== "profile"} aria-hidden={!pageActive || tab !== "profile"}>{mounted("profile") && <Suspense fallback={<PageLoading />}><Profile wide={wide} active={pageActive && tab === "profile"} /></Suspense>}</div>
   </>;
 }
 
 function AppBody() {
-  const { platform, tab, setTab, stack, pop, loginOpen, setLoginOpen, fs, setFs, clean } = useStore();
+  const { platform, tab, setTab, stack, pop, loginOpen, setLoginOpen, fs, setFs, clean, locked } = useStore();
   const mainRef = useRef<HTMLDivElement>(null);
   const [wide, setWide] = useState(false);
 
@@ -145,7 +148,7 @@ function AppBody() {
   }, [stack.length, pop, setTab, loginOpen, setLoginOpen, fs, setFs]);
 
   const pageActive = stack.length === 0 && !loginOpen;
-  const bottomInset = fs || clean ? 0 : 74;
+  const bottomInset = fs || clean || locked ? 0 : 74;
   /* 栈页（从搜索/分类/我的进入的播放页、图文页）没有底栏，
      底部只让出安全区。之前多留了 20px，视频底边会露出一条
      「底栏」似的窄缝（底部的压暗渐变到不了屏幕最底）。 */
@@ -154,15 +157,15 @@ function AppBody() {
   return (
     <div className={`absolute inset-0 flex bg-canvas plat-${platform}`}>
       <div ref={mainRef} className="relative flex-1 min-w-0 overflow-hidden win-main">
-        <MainTabs wide={wide} pageActive={pageActive} bottomInset={bottomInset} />
+        <MainTabs wide={wide} pageActive={pageActive} covered={stack.length > 0} bottomInset={bottomInset} />
 
         {stack.map((p, i) => (
-          <div key={p.key} inert={i !== stack.length - 1 || loginOpen} aria-hidden={i !== stack.length - 1 || loginOpen} className="absolute inset-0 z-30 bg-bg a-page-in" style={{ boxShadow: "-18px 0 40px rgba(0,0,0,.5)" }}>
+          <div key={p.key} inert={i !== stack.length - 1} aria-hidden={i !== stack.length - 1 || loginOpen} className="absolute inset-0 z-30 bg-bg a-page-in" style={{ boxShadow: "-18px 0 40px rgba(0,0,0,.5)" }}>
             <StackPage page={p} onBack={pop} wide={wide} top={i === stack.length - 1} bottomInset={stackInset} loginOpen={loginOpen} />
           </div>
         ))}
 
-        {!fs && !clean && stack.length === 0 && <TabBar />}
+        {!fs && !clean && !locked && stack.length === 0 && <TabBar />}
       </div>
     </div>
   );
@@ -191,7 +194,7 @@ function DesktopShell() {
 }
 
 function ShellInner({ collapsed, theater }: { collapsed: boolean; theater: boolean }) {
-  const { stack, pop, loginOpen, setLoginOpen, tab, setTab, platform, fs, setFs } = useStore();
+  const { stack, pop, loginOpen, setLoginOpen, tab, setTab, platform, fs, setFs, setTheater } = useStore();
   const mainRef = useRef<HTMLDivElement>(null);
   const [wide, setWide] = useState(true);
 
@@ -212,7 +215,14 @@ function ShellInner({ collapsed, theater }: { collapsed: boolean; theater: boole
         return;
       }
       if (loginOpen) { if (e.key === "Escape") setLoginOpen(false); return; }
-      if (e.key === "Escape") { if (runBack()) return; if (fs) { setFs(false); return; } if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; } if (stack.length) pop(); return; }
+      if (e.key === "Escape") {
+        if (runBack()) return;
+        if (fs) { setFs(false); return; }
+        if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; }
+        if (stack.length) { pop(); return; }
+        if (theater) { setTheater(false); return; }
+        return;
+      }
       if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
       if (e.key === "/") { e.preventDefault(); setTab("search"); return; }
       if (["1", "2", "3", "4"].includes(e.key) && !e.repeat) {
@@ -221,7 +231,7 @@ function ShellInner({ collapsed, theater }: { collapsed: boolean; theater: boole
     };
     window.addEventListener("keydown", fn);
     return () => window.removeEventListener("keydown", fn);
-  }, [stack.length, pop, setTab, loginOpen, setLoginOpen, fs, setFs]);
+  }, [stack.length, pop, setTab, loginOpen, setLoginOpen, fs, setFs, theater, setTheater]);
 
   const pageActive = stack.length === 0 && !loginOpen;
 
@@ -229,9 +239,9 @@ function ShellInner({ collapsed, theater }: { collapsed: boolean; theater: boole
     <div className={`absolute inset-0 flex bg-canvas plat-${platform}`}>
       {!theater && <DesktopRail collapsed={collapsed} />}
       <div ref={mainRef} className={`relative flex-1 min-w-0 overflow-hidden win-main ${theater ? "is-theater-main" : ""}`}>
-        <MainTabs wide={wide} pageActive={pageActive} bottomInset={14} />
+        <MainTabs wide={wide} pageActive={pageActive} covered={stack.length > 0} bottomInset={14} />
         {stack.map((p, i) => (
-          <div key={p.key} inert={i !== stack.length - 1 || loginOpen} aria-hidden={i !== stack.length - 1 || loginOpen} className="absolute inset-0 z-30 bg-bg win-page-in" style={{ boxShadow: "-18px 0 40px rgba(0,0,0,.5)" }}>
+          <div key={p.key} inert={i !== stack.length - 1} aria-hidden={i !== stack.length - 1 || loginOpen} className="absolute inset-0 z-30 bg-bg win-page-in" style={{ boxShadow: "-18px 0 40px rgba(0,0,0,.5)" }}>
             <StackPage page={p} onBack={pop} wide={wide} top={i === stack.length - 1} bottomInset={14} loginOpen={loginOpen} />
           </div>
         ))}
@@ -240,12 +250,28 @@ function ShellInner({ collapsed, theater }: { collapsed: boolean; theater: boole
   );
 }
 
+const supportsCssMax = typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("top", "max(1px, 2px)");
+
 /* ============ 移动端（无壳） ============ */
 function MobileShell() {
   const { platform } = useStore();
+  const minBottom = platform === "android" ? "24px" : "16px";
+  const safeStyle = supportsCssMax
+    ? {
+        "--sat": "max(var(--native-sat, 0px), env(safe-area-inset-top, 0px), 12px)",
+        "--sab": `max(var(--native-sab, 0px), env(safe-area-inset-bottom, 0px), ${minBottom})`,
+        "--sal": "max(var(--native-sal, 0px), env(safe-area-inset-left, 0px))",
+        "--sar": "max(var(--native-sar, 0px), env(safe-area-inset-right, 0px))",
+      }
+    : {
+        "--sat": "var(--native-sat, 12px)",
+        "--sab": `var(--native-sab, ${minBottom})`,
+        "--sal": "var(--native-sal, 0px)",
+        "--sar": "var(--native-sar, 0px)",
+      };
   return (
     <div className={`absolute inset-0 flex flex-col bg-canvas plat-${platform}`}
-      style={{ "--sat": "max(env(safe-area-inset-top), 12px)", "--sab": platform === "android" ? "max(env(safe-area-inset-bottom), 24px)" : "max(env(safe-area-inset-bottom), 16px)" } as React.CSSProperties}>
+      style={safeStyle as React.CSSProperties}>
       <div className="relative flex-1 min-h-0">
         <AppBody />
       </div>

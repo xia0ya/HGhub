@@ -48,11 +48,13 @@ export default function Category({ wide, active }: { wide: boolean; active: bool
     try {
       if (key === "posts") {
         const result = await api.postCategory("remen-chigua", 1, 8, "latest");
+        if (requestEpoch !== lineEpochRef.current) { retryKeys.current.add(key); return; }
         if (mounted.current) setPosts(result?.items || []);
       } else {
         const result = key === "original"
           ? await api.originalVideos("all", 1, 8, "new")
           : await api.category(key, 1, 8, "latest");
+        if (requestEpoch !== lineEpochRef.current) { retryKeys.current.add(key); return; }
         if (mounted.current) setRows(m => ({ ...m, [key]: result?.items || [] }));
       }
     } catch (error) {
@@ -76,15 +78,22 @@ export default function Category({ wide, active }: { wide: boolean; active: bool
     void loadPreview("posts");
   }, [active, loadPreview]);
 
-  /* 线路切换后：已打开过的分类里，加载失败的栏目在新线路上重试一次 */
+  /* 线路切换后：已打开过的分类在新线路上重新获取，避免残留旧线路数据 */
+  const prevEpoch = useRef(lineEpoch);
   useEffect(() => {
-    if (!lineEpoch || !started.current) return;
-    Object.entries(errorsRef.current).forEach(([key, msg]) => { if (msg) void loadPreview(key); });
+    if (prevEpoch.current === lineEpoch) return;
+    prevEpoch.current = lineEpoch;
+    if (!started.current) return;
+    setRows({});
+    setPosts([]);
+    setErrors({});
+    CHANNELS.forEach(c => { void loadPreview(c.cate); });
+    void loadPreview("posts");
   }, [lineEpoch, loadPreview]);
 
   return (
     <div className="ios-page absolute inset-0 bg-bg flex flex-col">
-      <div className="ios-page-heading shrink-0 px-4">
+      <div className="ios-page-heading shrink-0">
         <div className="flex items-end gap-2.5">
           <h1 className="ios-page-title text-on">分类</h1>
           <span className="text-[12px] text-mut pb-0.5">{CHANNELS.length + 1} 个频道</span>
@@ -124,7 +133,7 @@ export default function Category({ wide, active }: { wide: boolean; active: bool
               </Button>
               <FilteredContent items={list} scopeKey={c.cate}>{visible => <div className="scroll-x flex gap-2.5 snap-x" role="group" aria-label={`${c.name}影片预览`}>
                 {visible.map((v) => (
-                  <RowCard key={v.id} v={v} onOpen={() => push({ kind: "feed", videoIds: list.map((x) => x.id), index: list.findIndex((x) => x.id === v.id), title: c.name })} />
+                  <RowCard key={v.id} v={v} onOpen={() => push({ kind: "feed", videoIds: visible.map((x) => x.id), index: visible.findIndex((x) => x.id === v.id), title: c.name })} />
                 ))}
                 {!list.length && <PreviewStatus name={c.name} loading={loading[c.cate] !== false} error={errors[c.cate]} onRetry={() => void loadPreview(c.cate)} />}
               </div>}</FilteredContent>
@@ -276,7 +285,7 @@ export function ChannelPage({ cate, name, onBack, wide }: { cate: string; name: 
   return (
     <div className="ios-page absolute inset-0 bg-bg flex flex-col">
       <div className="shrink-0 bg-s1" style={{ paddingTop: "var(--sat, 0px)" }}>
-        <div className="px-3 pt-2 pb-3 flex items-center gap-2.5">
+        <div className="pt-2 pb-3 flex items-center gap-2.5">
           <Button aria-label="返回" onClick={onBack} className="w-10 h-10 rounded-full flex items-center justify-center text-on hover:bg-s3 pressable"><IBack size={20} /></Button>
           <span className="w-[40px] h-[40px] rounded-(--r-sm) bg-pc text-on-pc flex items-center justify-center"><IGrid size={21} strokeWidth={1.9} /></span>
           <div className="flex-1 min-w-0">
@@ -286,7 +295,7 @@ export function ChannelPage({ cate, name, onBack, wide }: { cate: string; name: 
           <Button onClick={() => setSearching(true)} aria-label={cate === "original" ? "搜索原创" : "搜索短剧"} className="w-9 h-9 shrink-0 rounded-full flex items-center justify-center text-on hover:bg-s3 pressable"><ISearch size={19} /></Button>
         </div>
         {cate === "original" && (
-          <div className="px-4 pb-2 flex flex-wrap gap-2">
+          <div className="pb-2 flex flex-wrap gap-2">
             {ORIGINAL_CATES.map((s) => (
               <Button aria-pressed={originalCate === s.value} key={s.value} onClick={() => changeOriginalCate(s.value)}
                 className="ios-filter-pill">{s.label}</Button>
@@ -294,7 +303,7 @@ export function ChannelPage({ cate, name, onBack, wide }: { cate: string; name: 
           </div>
         )}
         {cate !== "original" && (
-          <div className="px-4 pb-3 flex flex-wrap gap-2">
+          <div className="pb-3 flex flex-wrap gap-2">
             {CHANNEL_SORTS.map((s) => (
               <Button aria-pressed={serverSort === s.value} key={s.value} onClick={() => changeServerSort(s.value)}
                 className="ios-filter-pill">{s.label}</Button>
@@ -302,12 +311,12 @@ export function ChannelPage({ cate, name, onBack, wide }: { cate: string; name: 
           </div>
         )}
       </div>
-      <div ref={scrollContainer} className="flex-1 scroll-y px-4 pt-3 pb-8" aria-busy={loading}>
+      <div ref={scrollContainer} className="flex-1 scroll-y pt-3 pb-8" aria-busy={loading}>
         {items.length > 0 && replacing && <p role="status" className="mb-3 text-[12px] text-mut">{loading ? "正在更新，暂时保留上次结果…" : "当前显示上次结果，请重试以更新筛选。"}</p>}
         {items.length > 0 && err && <div role="status" className="mb-3 flex flex-wrap items-center gap-2 text-[12px] text-mut"><span>{err}</span><Button className="px-3 text-primary" onClick={() => void loadMore(replacing)}>重试</Button></div>}
         {items.length ? (
           <div inert={replacing || undefined} className={replacing ? "opacity-60" : undefined}>
-            <Masonry videos={items} scopeKey={filterKey(serverSort, originalCate)} wide={wide} onOpen={(v) => { if (!replacing) push({ kind: "feed", videoIds: items.map((x) => x.id), index: items.findIndex((x) => x.id === v.id), title: name }); }} />
+            <Masonry videos={items} scopeKey={filterKey(serverSort, originalCate)} wide={wide} onOpen={(v, visible) => { if (!replacing) push({ kind: "feed", videoIds: visible.map((x) => x.id), index: visible.findIndex((x) => x.id === v.id), title: name }); }} />
           </div>
         ) : err ? (
           <Empty icon={<IGrid size={26} />} title="加载失败" sub={err} action="重试" onAction={() => void loadMore(true)} />
@@ -321,7 +330,7 @@ export function ChannelPage({ cate, name, onBack, wide }: { cate: string; name: 
           <div className="text-center text-[12px] text-dim py-3">— 已经到底啦 —</div>
         )}
       </div>
-      {searching && <InplaceSearch kind="video" scope={cate === "original" ? "original" : undefined} wide={wide} onClose={() => setSearching(false)} onOpenVideo={(v, list) => push({ kind: "feed", videoIds: list.map((x) => x.id), index: list.findIndex((x) => x.id === v.id), title: `搜索 · ${name}` })} />}
+      {searching && <InplaceSearch kind="video" scope={cate === "original" ? "original" : undefined} wide={wide} onClose={() => setSearching(false)} onOpenVideo={(v, list, kw) => push({ kind: "feed", videoIds: list.map((x) => x.id), index: list.findIndex((x) => x.id === v.id), title: kw ? `搜索 · ${kw}` : `搜索 · ${name}` })} />}
     </div>
   );
 }

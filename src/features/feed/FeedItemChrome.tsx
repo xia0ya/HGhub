@@ -11,6 +11,7 @@ import {
 } from "../../shared/ui/icons";
 import type { FeedMeta } from "./useFeedActions";
 import type { FeedPanel } from "./useFeedViewport";
+import "../../styles/video-details.css";
 
 type Props = {
   isActive: boolean;
@@ -100,7 +101,7 @@ export default function FeedItemChrome({
             <small>{index + 1} / {effectiveLength}</small>
           </div>
         ) : (
-          <div className="absolute inset-x-0 z-20 flex items-center gap-2 px-2.5" style={{ top: "calc(var(--sat, 0px) + 8px)", paddingRight: 132 }}>
+          <div className="absolute inset-x-0 z-20 flex items-center gap-2 px-2.5" style={{ top: "calc(var(--sat, 0px) + 8px)", paddingRight: 164 }}>
             <Button onClick={onBack} aria-label="返回" className="hg-chip w-9 h-9 rounded-full flex items-center justify-center pressable elev-1"><IBack size={20} /></Button>
             <span className="text-[15px] font-semibold hg-ink hg-ov-shadow truncate">{title}</span>
           </div>
@@ -115,22 +116,22 @@ export default function FeedItemChrome({
 
       {/* 竖屏下的快捷操作（#19）：
           横版视频 → 保持原样，居中横排一条（画面上下有黑边，居中不压主体）；
-          竖版视频 → 只剩「切集」图标，贴右边缘，避免压住画面正中。
+          竖版视频 → 缩放还原胶囊锚定在顶部安全区下方，兼容小屏与分屏模式。
           显隐用 opacity + 轻微位移过渡（不卸载），净屏/全屏时慢慢淡出。 */}
       {!isDesktop && (
         <div
           className={landscapeVideo
-            ? "absolute z-20 w-max max-w-[calc(100%-24px)] whitespace-nowrap"
+            ? "absolute z-20 w-max whitespace-nowrap"
             : "absolute z-20"}
           aria-hidden={!(isActive && capsuleOn)}
           style={{
             left: landscapeVideo ? "50%" : undefined,
-            right: landscapeVideo ? undefined : 8,
-            top: landscapeVideo ? "64%" : "auto",
-            bottom: landscapeVideo ? undefined : `calc(var(--sab, 0px) + ${bottomInset + 460}px)`,
+            right: landscapeVideo ? undefined : "calc(var(--sar, 0px) + 12px)",
+            maxWidth: landscapeVideo ? "calc(100% - var(--sal, 0px) - var(--sar, 0px) - 32px)" : undefined,
+            top: landscapeVideo ? "64%" : "calc(var(--sat, 0px) + 56px)",
             transform: landscapeVideo
               ? `translate(-50%, ${isActive && capsuleOn ? 0 : 10}px)`
-              : `translateY(${isActive && capsuleOn ? 0 : 10}px)`,
+              : `translateY(${isActive && capsuleOn ? 0 : -6}px)`,
             opacity: isActive && capsuleOn ? 1 : 0,
             pointerEvents: isActive && capsuleOn ? "auto" : "none",
             transition: "opacity .38s cubic-bezier(.4,0,.2,1), transform .38s cubic-bezier(.4,0,.2,1)",
@@ -144,12 +145,12 @@ export default function FeedItemChrome({
                 <Button type="button" onClick={() => {
                   if (zoom.s > 1.05) { setZoom({ s: 1, x: 0, y: 0, g: false }); setPortraitFit("contain"); }
                   else setPortraitFit((f) => (f === "contain" ? "cover" : "contain"));
-                }} className="whitespace-nowrap flex items-center justify-center gap-1 h-[26px] px-3 rounded-full text-[12px] font-semibold pressable transition-colors duration-150"
+                }} className="whitespace-nowrap flex items-center justify-center gap-1 min-h-0 h-[26px] px-3 rounded-full text-[12px] font-semibold pressable transition-colors duration-150"
                   style={{ color: "rgba(255,255,255,.9)" }}>
                   {zoom.s > 1.05 ? `还原 ${zoom.s.toFixed(1)}x` : portraitFit === "contain" ? "铺满" : "适应"}
                 </Button>
                 <Button type="button" onClick={() => enterFs(true)}
-                  className="whitespace-nowrap flex items-center justify-center gap-1 h-[26px] px-3 rounded-full text-[12px] font-semibold pressable transition-colors duration-150"
+                  className="whitespace-nowrap flex items-center justify-center gap-1 min-h-0 h-[26px] px-3 rounded-full text-[12px] font-semibold pressable transition-colors duration-150"
                   style={{ color: "rgba(255,255,255,.9)" }}>
                   <IExpand size={13} /><span>横屏</span>
                 </Button>
@@ -157,7 +158,7 @@ export default function FeedItemChrome({
             )}
             {!landscapeVideo && zoom.s > 1.05 && (
               <Button type="button" onClick={() => setZoom({ s: 1, x: 0, y: 0, g: false })}
-                className="whitespace-nowrap flex items-center justify-center gap-1 h-[26px] px-3 rounded-full text-[12px] font-semibold pressable transition-colors duration-150"
+                className="whitespace-nowrap flex items-center justify-center gap-1 min-h-0 h-[26px] px-3 rounded-full text-[12px] font-semibold pressable transition-colors duration-150"
                 style={{ color: "rgba(255,255,255,.9)" }}>
                 还原 {zoom.s.toFixed(1)}x
               </Button>
@@ -169,28 +170,26 @@ export default function FeedItemChrome({
       {/* 右侧操作栏（移动端）：收藏 / 评论 / 全屏 / 分享
           颜色写死不跟主题走：浅色主题下这些字必须仍是白色 */}
       {!fs && !clean && !isDesktop && (
-        <div className="mobile-video-action-rail absolute right-3 z-20 flex flex-col items-center gap-[16px]"
-          style={{ bottom: `calc(var(--sab, 0px) + ${bottomInset + 92}px)` }}>
+        <div className="mobile-video-action-rail absolute z-20 flex flex-col items-center gap-[16px]"
+          style={{ right: "calc(var(--sar, 0px) + 12px)", bottom: `calc(var(--sab, 0px) + ${bottomInset + 92}px)` }}>
           {episodes.length > 1 && (
             <Button type="button" onClick={() => { setSwipeEp(!swipeEp); toast(swipeEp ? "上下划切集已关闭" : "上下划切集已开启"); }}
               className="flex flex-col items-center gap-1 pressable" aria-pressed={swipeEp} aria-label="上下划切集开关">
               <IVertSwap size={26} className={swipeEp ? "hg-gold hg-ov-shadow" : "hg-ink hg-ov-shadow"} />
-              <span className="text-[12px] hg-ov-shadow" style={{ color: swipeEp ? "#f3c969" : undefined }}>切集</span>
+              <span className="text-[12px] hg-ink-2 hg-ov-shadow" style={{ color: swipeEp ? "#f3c969" : undefined }}>切集</span>
             </Button>
           )}
           {hevcUrl && (
             <Button type="button" onClick={() => { setPreferHevc(!preferHevc); toast(preferHevc ? "已切回标准画质" : "已切换高清 HEVC", "ok"); }}
               className="flex flex-col items-center gap-1 pressable" aria-pressed={preferHevc} aria-label="画质切换">
-              <span className={`flex items-center justify-center h-[22px] min-w-[30px] px-1 rounded-md text-[12px] font-bold hg-ov-shadow ${preferHevc ? "bg-primary text-on-primary" : "hg-chip hg-ink-2"}`}>{preferHevc ? "HD" : "标清"}</span>
-              <span className="text-[12px] hg-ov-shadow" style={{ color: preferHevc ? "#fff" : undefined }}>{preferHevc ? "高清" : "标清"}</span>
+              <span className={`flex items-center justify-center h-[22px] min-w-[30px] px-1 rounded-md text-[12px] font-bold hg-ov-shadow ${preferHevc ? "bg-white text-[#191919]" : "hg-chip hg-ink-2"}`}>{preferHevc ? "HD" : "标清"}</span>
+              <span className="text-[12px] hg-ink-2 hg-ov-shadow" style={{ color: preferHevc ? "#fff" : undefined }}>{preferHevc ? "高清" : "标清"}</span>
             </Button>
           )}
-          {kind === "video" && (
-            <Button onClick={() => void onLike()} disabled={likePending} aria-busy={likePending} className="flex flex-col items-center gap-1 pressable" aria-pressed={liked} aria-label="点赞">
-              {liked ? <IHeartF size={27} className="text-neon" /> : <IHeart size={27} className="hg-ink hg-ov-shadow" />}
-              <span className="text-[12px] text-white/90 tabular-nums">{fmt(likeCount)}</span>
-            </Button>
-          )}
+          <Button onClick={() => void onLike()} disabled={likePending} aria-busy={likePending} className="flex flex-col items-center gap-1 pressable" aria-pressed={liked} aria-label="点赞">
+            {liked ? <IHeartF size={27} className="text-neon" /> : <IHeart size={27} className="hg-ink hg-ov-shadow" />}
+            <span className="text-[12px] text-white/90 tabular-nums">{fmt(likeCount)}</span>
+          </Button>
           <Button onClick={() => void onFav()} disabled={collectPending} aria-busy={collectPending} className="flex flex-col items-center gap-1 pressable" aria-pressed={collected} aria-label="收藏">
             {collected ? <IStarF size={27} className="hg-gold" /> : <IStar size={27} className="hg-ink hg-ov-shadow" />}
             <span className="text-[12px] text-white/90 tabular-nums">{fmt(collectCount)}</span>
@@ -223,30 +222,28 @@ export default function FeedItemChrome({
             <small>{String(index + 1).padStart(2, "0")} / {String(effectiveLength).padStart(2, "0")}</small>
           </div>
 
+          <Button onClick={() => void onLike()} disabled={likePending} aria-busy={likePending} aria-label="点赞" className="flex flex-col items-center gap-1 pressable" aria-pressed={liked}>
+            <span key={heartBurst} className={heartBurst ? "a-pop" : ""}>
+              {liked ? <IHeartF size={30} className="text-neon" /> : <IHeart size={30} className="text-white tsh" />}
+            </span>
+            <span className="text-[12px] text-white/90 tabular-nums">{fmt(likeCount)}</span>
+          </Button>
+
+          <Button onClick={() => setPanel("comments")} aria-label={`评论 ${fmt(meta.comment)} 条`} className="flex flex-col items-center gap-1 pressable">
+            <ICommentF size={27} className="text-white tsh" />
+            <span className="text-[12px] text-white/90 tabular-nums">{fmt(meta.comment)}</span>
+          </Button>
+
+          <Button onClick={() => void onFav()} disabled={collectPending} aria-busy={collectPending} aria-label="收藏" className="flex flex-col items-center gap-1 pressable" aria-pressed={collected}>
+            {collected ? <IStarF size={27} className="hg-gold" /> : <IStar size={27} className="hg-ink hg-ov-shadow" />}
+            <span className="text-[12px] text-white/90 tabular-nums">{fmt(collectCount)}</span>
+          </Button>
+
           {kind === "video" && (
-            <>
-              <Button onClick={() => void onLike()} disabled={likePending} aria-busy={likePending} aria-label="点赞" className="flex flex-col items-center gap-1 pressable" aria-pressed={liked}>
-                <span key={heartBurst} className={heartBurst ? "a-pop" : ""}>
-                  {liked ? <IHeartF size={30} className="text-neon" /> : <IHeart size={30} className="text-white tsh" />}
-                </span>
-                <span className="text-[12px] text-white/90 tabular-nums">{fmt(likeCount)}</span>
-              </Button>
-
-              <Button onClick={() => setPanel("comments")} aria-label={`评论 ${fmt(meta.comment)} 条`} className="flex flex-col items-center gap-1 pressable">
-                <ICommentF size={27} className="text-white tsh" />
-                <span className="text-[12px] text-white/90 tabular-nums">{fmt(meta.comment)}</span>
-              </Button>
-
-              <Button onClick={() => void onFav()} disabled={collectPending} aria-busy={collectPending} aria-label="收藏" className="flex flex-col items-center gap-1 pressable" aria-pressed={collected}>
-                {collected ? <IStarF size={27} className="hg-gold" /> : <IStar size={27} className="hg-ink hg-ov-shadow" />}
-                <span className="text-[12px] text-white/90 tabular-nums">{fmt(collectCount)}</span>
-              </Button>
-
-              <Button onClick={() => setPanel("episodes")} aria-label="选集" className="flex flex-col items-center gap-1 pressable">
-                <IList size={26} className="text-white tsh" />
-                <span className="text-[12px] text-white/90">选集</span>
-              </Button>
-            </>
+            <Button onClick={() => setPanel("episodes")} aria-label="选集" className="flex flex-col items-center gap-1 pressable">
+              <IList size={26} className="text-white tsh" />
+              <span className="text-[12px] text-white/90">选集</span>
+            </Button>
           )}
 
           <Button onClick={shareLink} aria-label="分享" className="flex flex-col items-center gap-1 pressable">
@@ -270,7 +267,7 @@ export default function FeedItemChrome({
             {hevcUrl && (
               <Button type="button" aria-pressed={preferHevc}
                 onClick={() => { setPreferHevc(!preferHevc); toast(preferHevc ? "已切回标准画质" : "已切换高清 HEVC", "ok"); }}
-                className={`shrink-0 h-[18px] px-1.5 rounded-md text-[12px] font-bold flex items-center pressable transition-colors ${preferHevc ? "bg-primary text-on-primary" : "text-white border border-white/30"}`}>
+                className={`shrink-0 min-h-0 h-[18px] px-1.5 rounded-md text-[12px] font-bold flex items-center pressable transition-colors ${preferHevc ? "bg-white text-[#191919]" : "text-white border border-white/30"}`}>
                 {preferHevc ? "HD" : "标清"}
               </Button>
             )}
@@ -302,10 +299,10 @@ export default function FeedItemChrome({
             <div className="mobile-video-meta-copy flex flex-wrap items-center gap-2">
               <Button aria-label="视频详情" onClick={() => setPanel("detail")}
                 className="min-h-11 flex items-center gap-0.5 text-[12px] font-medium hg-ink-3 hg-ov-shadow-strong pressable">
-                详情 · 第 {curEp} 集<IChevR size={11} />
+                {kind === "post" ? "详情与标签" : `详情 · 第 ${curEp} 集`}<IChevR size={11} />
               </Button>
             </div>
-            {isActive && <div ref={barRef} className="mx-4 mt-2 relative" style={{ height: 14, touchAction: "none" }}
+            {isActive && <div ref={barRef} className="mx-4 -mt-0.5 -mb-2.5 relative" style={{ height: 34, touchAction: "none" }}
               onPointerDown={onBarDown} onPointerMove={onBarMove} onPointerUp={(e) => onBarUp(e, false)} onPointerCancel={(e) => onBarUp(e, true)}>
               {/* 轨道：几乎看不见，只暗示可拖动 */}
               <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-[2px] rounded-full" style={{ background: "rgba(255,255,255,.1)" }}>
@@ -320,7 +317,7 @@ export default function FeedItemChrome({
                   transition: barPct !== null ? "none" : "left .25s linear",
                 }} />
               {barPct !== null && (
-                <div className="absolute left-1/2 -translate-x-1/2 -top-8 px-2.5 py-1 rounded-md hg-chip-strong backdrop-blur-md text-[13px] font-bold tabular-nums whitespace-nowrap">
+                <div className="absolute left-1/2 -translate-x-1/2 -top-6 px-2.5 py-1 rounded-md hg-chip-strong backdrop-blur-md text-[13px] font-bold tabular-nums whitespace-nowrap">
                   {fmtTime(barPct * (duration || 0))}
                 </div>
               )}

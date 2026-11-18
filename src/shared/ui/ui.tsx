@@ -1,8 +1,9 @@
 import { Button, Image, Surface } from "./ios/controls";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { cover, platform } from "../api/api";
 export { Sheet, Modal } from "./ios/overlays";
-import { useStore } from "../model/store";
+import { useToasts } from "../model/store";
 import { Loader } from "./ios/effects";
 import { IBoltF, ICheck, IGlobe, IHeartF, IMinus, ISparkF, IStarF } from "./icons";
 
@@ -58,8 +59,14 @@ export function Empty({ icon, title, sub, action, onAction }: {
 
 /* ——— Toast ——— */
 export function ToastHost() {
-  const { toasts } = useStore();
-  return (
+  const toasts = useToasts();
+  const [fsHost, setFsHost] = useState<Element | null>(() => (typeof document !== "undefined" ? document.fullscreenElement : null));
+  useEffect(() => {
+    const onFs = () => setFsHost(document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+  const content = (
     <div role="status" aria-live="polite" aria-atomic="true" className="ios-toast-host absolute inset-x-0 z-[300] flex flex-col items-center gap-2 pointer-events-none px-6" style={{ bottom: "calc(var(--sab, 0px) + 96px)" }}>
       {toasts.map((t) =>
         t.line ? (
@@ -105,12 +112,13 @@ export function ToastHost() {
             {t.icon === "heart" && <IHeartF size={16} className="text-neon shrink-0" />}
             {t.icon === "star" && <IStarF size={16} className="text-amber shrink-0" />}
             {t.icon === "info" && <ISparkF size={15} className="text-cyan shrink-0" />}
-            <span className="text-[14px] text-on truncate">{t.msg}</span>
+            <span className="text-[14px] text-on leading-snug clamp-2 break-words">{t.msg}</span>
           </Surface>
         ),
       )}
     </div>
   );
+  return fsHost ? createPortal(content, fsHost) : content;
 }
 
 /* ——— 图片（骨架 + 渐显，自动走本地解密协议） ——— */

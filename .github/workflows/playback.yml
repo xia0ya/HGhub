@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       scenarios:
-        description: Comma-separated checks (seek,legacy,lifecycle,gesture,proxy,portrait-fit,ios-native,recovery,review,tv)
-        default: seek,legacy,lifecycle,gesture,proxy
+        description: "'all' (parallel core + extended) or comma-separated subset (seek,legacy,lifecycle,gesture,proxy,portrait-fit,ios-native,recovery,review,tv)"
+        default: all
         required: true
 
 permissions:
@@ -13,8 +13,12 @@ permissions:
 
 jobs:
   playback:
+    name: playback (${{ matrix.shard }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix: ${{ inputs.scenarios == 'all' && fromJSON('{"include":[{"shard":"core","scenarios":"seek,legacy,lifecycle,gesture,proxy,portrait-fit"},{"shard":"extended","scenarios":"ios-native,recovery,review,tv"}]}') || fromJSON(format('{{"include":[{{"shard":"custom","scenarios":{0}}}]}}', toJSON(inputs.scenarios))) }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -32,13 +36,13 @@ jobs:
           pnpm exec playwright-core install --with-deps chromium
       - name: Run playback checks and collect diagnostics
         env:
-          PLAYBACK_SCENARIOS: ${{ inputs.scenarios }}
+          PLAYBACK_SCENARIOS: ${{ matrix.scenarios }}
         run: pnpm test:playback --scenarios "$PLAYBACK_SCENARIOS" --output test-results/playback-ci
       - name: Upload diagnostics even when a check fails
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: playback-diagnostics
+          name: playback-diagnostics-${{ matrix.shard }}
           path: test-results/
           retention-days: 7
           if-no-files-found: warn

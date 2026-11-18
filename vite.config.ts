@@ -42,6 +42,10 @@ export default defineConfig(({ mode }) => {
       watch: { ignored: ["**/src-tauri/**"] },
     },
     envPrefix: ["VITE_", "TAURI_ENV_*"],
+    worker: {
+      // Classic IIFE workers run on Chromium 66-79 WebViews where module workers are absent.
+      format: "iife",
+    },
     build: {
       // 老 Android WebView（Chromium 66）与 iOS 13/14 的语法目标；#138 三设备实测的组合。
       target: ["chrome66", "safari14.1"],
@@ -51,6 +55,14 @@ export default defineConfig(({ mode }) => {
       cssMinify: false,
       minify: "esbuild",
       sourcemap: false,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes("node_modules/hls.js")) return "hls";
+            return undefined;
+          },
+        },
+      },
     },
   };
 });

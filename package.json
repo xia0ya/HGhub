@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && tsc --project tsconfig.tests.json && vite build",
+    "build": "tsc --noEmit && tsc --project tsconfig.node.json && tsc --project tsconfig.tests.json && vite build",
     "build:tv": "node scripts/build-android-tv.mjs",
     "dev:tv": "node scripts/build-android-tv.mjs --dev",
     "preview": "vite preview",
@@ -51,10 +51,5 @@
     "tailwindcss": "4.1.17",
     "typescript": "5.9.3",
     "vite": "7.3.2"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
   }
 }

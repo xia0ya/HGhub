@@ -12,21 +12,23 @@ import {
 const appWindow = () => getCurrentWindow();
 
 export function DesktopTitleBar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
-  const { theme, setTheme, setTab, platform } = useStore();
+  const { theme, setTheme, setTab, platform, theater, setTheater } = useStore();
   const [maxed, setMaxed] = useState(false);
   /* macOS 原生全屏：红绿灯被系统隐藏，标题栏左侧 84px 让位要收回（见 index.css） */
   const [nativeFs, setNativeFs] = useState(false);
 
   useEffect(() => {
+    let disposed = false;
     let un: (() => void) | undefined;
     const sync = () => {
-      appWindow().isMaximized().then(setMaxed).catch(() => {});
-      appWindow().isFullscreen().then(setNativeFs).catch(() => {});
+      if (disposed) return;
+      appWindow().isMaximized().then((v) => { if (!disposed) setMaxed(v); }).catch(() => {});
+      appWindow().isFullscreen().then((v) => { if (!disposed) setNativeFs(v); }).catch(() => {});
     };
     sync();
     appWindow().onResized(sync)
-      .then((f: () => void) => { un = f; }).catch(() => {});
-    return () => { un?.(); };
+      .then((f: () => void) => { if (disposed) { try { f(); } catch { /* ignore */ } } else un = f; }).catch(() => {});
+    return () => { disposed = true; try { un?.(); } catch { /* ignore */ } };
   }, []);
 
   return (
@@ -36,7 +38,8 @@ export function DesktopTitleBar({ collapsed, onToggle }: { collapsed: boolean; o
         <Logo size={24} />
         <span>HG<span className="win-wordmark-light">hub</span>X</span>
       </div>
-      <Button className="win-caption-tool" aria-label={collapsed ? "展开侧栏" : "收起侧栏"} onClick={onToggle}>
+      <Button className="win-caption-tool" aria-label={collapsed || theater ? "展开侧栏" : "收起侧栏"}
+        onClick={() => { if (theater) { setTheater(false); if (collapsed) onToggle(); } else onToggle(); }}>
         <ISidebar size={17} strokeWidth={1.7} />
       </Button>
       <div className="win-drag-region" data-tauri-drag-region />
@@ -61,12 +64,12 @@ export function DesktopTitleBar({ collapsed, onToggle }: { collapsed: boolean; o
 }
 
 export function DesktopRail({ collapsed }: { collapsed: boolean }) {
-  const { tab, setTab, user, setLoginOpen, push, platform, stack } = useStore();
+  const { tab, setTab, user, setLoginOpen, openRootPage, platform, stack } = useStore();
   /* 从侧栏进入的栈页（排行榜 / 设置）接管高亮，否则「我的」会一直亮着，看起来不像独立页面 */
-  const top = stack[stack.length - 1];
+  const root = stack[0];
   const railPage: "ranks" | "settings" | null =
-    top?.kind === "settings" ? "settings" : top?.kind === "ranks" ? "ranks" : null;
-  const onTab = (key: Tab | "search") => !railPage && tab === key;
+    root?.kind === "settings" ? "settings" : root?.kind === "ranks" ? "ranks" : null;
+  const onTab = (key: Tab | "search") => !stack.length && tab === key;
   const items: { key: Tab; label: string; Icon: typeof IHome; Filled: typeof IHomeF }[] = [
     { key: "home", label: "首页", Icon: IHome, Filled: IHomeF },
     { key: "category", label: "分类", Icon: IGrid, Filled: IGridF },
@@ -92,13 +95,13 @@ export function DesktopRail({ collapsed }: { collapsed: boolean }) {
           ))}
           <Button aria-label="排行榜" className={`win-nav-item ${railPage === "ranks" ? "is-selected" : ""}`}
             aria-current={railPage === "ranks" ? "page" : undefined}
-            onClick={() => { if (railPage !== "ranks") push({ kind: "ranks" }); }}>
+            onClick={() => { if (railPage !== "ranks" || stack.length > 1) openRootPage({ kind: "ranks" }); }}>
             <span className="win-nav-symbol"><ITrophy size={21} strokeWidth={1.7} /></span>
             <span className="win-nav-copy">排行榜</span>
           </Button>
           <Button aria-label="设置" className={`win-nav-item ${railPage === "settings" ? "is-selected" : ""}`}
             aria-current={railPage === "settings" ? "page" : undefined}
-            onClick={() => { if (railPage !== "settings") push({ kind: "settings" }); }}>
+            onClick={() => { if (railPage !== "settings" || stack.length > 1) openRootPage({ kind: "settings" }); }}>
             <span className="win-nav-symbol"><ISettings size={21} strokeWidth={1.7} /></span>
             <span className="win-nav-copy">设置</span>
           </Button>

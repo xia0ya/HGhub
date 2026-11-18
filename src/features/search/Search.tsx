@@ -26,7 +26,11 @@ export default function Search({ active, wide }: { active: boolean; wide: boolea
   const [hotLoading, setHotLoading] = useState(false);
   const [hotError, setHotError] = useState<string | null>(null);
   const hotBusy = useRef(false);
+  const hotSeq = useRef(0);
+  const hotEpoch = useRef(lineEpoch);
   const hotLoadedAt = useRef(0);
+  const aliveRef = useRef(true);
+  useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false; }; }, []);
 
   /* 移动端进入搜索页不自动聚焦：iOS 会立刻弹键盘遮住内容（#20）。
      桌面端没有软键盘，聚焦便于直接打字。 */
@@ -34,30 +38,39 @@ export default function Search({ active, wide }: { active: boolean; wide: boolea
     if (active && !isMobile) inputRef.current?.focus();
   }, [active]);
 
-  const refreshHot = async () => {
-    if (hotBusy.current) return;
+  const refreshHot = async (force = false) => {
+    if (hotBusy.current && !force) return;
+    const seq = ++hotSeq.current;
+    const reqEpoch = hotEpoch.current;
     hotBusy.current = true;
     setHotLoading(true);
     setHotError(null);
     try {
       const res = await api.searchHot();
+      if (!aliveRef.current || seq !== hotSeq.current || reqEpoch !== hotEpoch.current) return;
       setHotVideos(res.items);
       hotLoadedAt.current = Date.now();
     } catch (e) {
+      if (!aliveRef.current || seq !== hotSeq.current || reqEpoch !== hotEpoch.current) return;
       setHotError(e instanceof Error ? e.message : "热搜榜加载失败，请重试");
     } finally {
-      hotBusy.current = false;
-      setHotLoading(false);
+      if (seq === hotSeq.current) {
+        hotBusy.current = false;
+        if (aliveRef.current) setHotLoading(false);
+      }
     }
   };
-  const hotEpoch = useRef(lineEpoch);
   useEffect(() => {
-    if (hotEpoch.current !== lineEpoch) {
+    const epochChanged = hotEpoch.current !== lineEpoch;
+    if (epochChanged) {
       hotEpoch.current = lineEpoch;
       hotLoadedAt.current = 0;
+      hotBusy.current = false;
+      setHotVideos([]);
+      setHotError(null);
     }
     // 切换主导航时短暂复用榜单；手动刷新或切线路后重新获取官网内容。
-    if (active && Date.now() - hotLoadedAt.current > 60_000) void refreshHot();
+    if (active && (epochChanged || Date.now() - hotLoadedAt.current > 60_000)) void refreshHot(epochChanged);
   }, [active, lineEpoch]);
 
   const changeTab = (next: "video" | "post") => {
@@ -81,13 +94,19 @@ export default function Search({ active, wide }: { active: boolean; wide: boolea
     <div className="ios-page absolute inset-0 bg-bg flex flex-col">
       <div className="ios-page-heading shrink-0"><h1 className="ios-page-title">搜索</h1></div>
       {/* 搜索栏 */}
-      <div className="shrink-0 px-4 pb-3 flex items-center gap-2.5" >
+      <div className="shrink-0 pb-3 flex items-center gap-2.5" >
         <Form className="ios-search-form flex-1 min-w-0 flex items-center gap-2"
           onSubmit={(e) => { e.preventDefault(); submit(q); }}>
           <ISearch size={17} className="text-mut shrink-0" />
-          <Input aria-label="搜索短剧、帖子、题材…" ref={inputRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索短剧、帖子、题材…"
+          <Input aria-label="搜索短剧、帖子、题材…" ref={inputRef} value={q}
+            onChange={(e) => {
+              const next = e.target.value;
+              setQ(next);
+              if (!next && submitted) { setSubmitted(""); results.clear(); }
+            }}
+            placeholder="搜索短剧、帖子、题材…"
             className="flex-1 min-w-0 bg-transparent text-[14px] text-on placeholder-dim outline-none" />
-          {q && <Button aria-label="清空搜索" type="button" onClick={() => { results.clear(); setQ(""); setSubmitted(""); inputRef.current?.focus(); }} className="ios-icon-button ios-search-clear"><IClose size={16} /></Button>}
+          {(q || submitted) && <Button aria-label="清空搜索" type="button" onClick={() => { results.clear(); setQ(""); setSubmitted(""); inputRef.current?.focus(); }} className="ios-icon-button ios-search-clear"><IClose size={16} /></Button>}
         </Form>
         <Button onClick={() => push({ kind: "ranks" })} aria-label="排行榜"
           variant="primary" className="ios-icon-button ios-search-shortcut">
@@ -162,7 +181,7 @@ export default function Search({ active, wide }: { active: boolean; wide: boolea
             <section aria-label="搜索结果" aria-busy={loading}>
               {result && count > 0 ? <>
                 {result.kind === "video" ? (
-                  <Masonry videos={items} scopeKey={JSON.stringify([submitted, tab, result.keyword, result.kind])} wide={wide} onOpen={(v) => push({ kind: "feed", videoIds: items.map((x) => x.id), index: items.findIndex((x) => x.id === v.id), title: `搜索 · ${result.keyword}` })} />
+                  <Masonry videos={items} scopeKey={JSON.stringify([submitted, tab, result.keyword, result.kind])} wide={wide} onOpen={(v, visible) => push({ kind: "feed", videoIds: visible.map((x) => x.id), index: visible.findIndex((x) => x.id === v.id), title: `搜索 · ${result.keyword}` })} />
                 ) : (
                   <FilteredContent items={posts} scopeKey={JSON.stringify([submitted, tab, result.keyword, result.kind])}>{visible => <div className={`ios-media-grid ${wide ? "is-wide" : ""}`}>
                     {visible.map((post) => (
@@ -204,14 +223,15 @@ export function RankPage({ onBack, wide }: { onBack: () => void; wide: boolean }
   const [tab, setTab] = useState<RankKind>("hot");
   const [states, setStates] = useState<Partial<Record<RankKind, RankState>>>({});
   const cache = useRef<Partial<Record<RankKind, RankState>>>({});
-  const pending = useRef(new Set<RankKind>());
+  const pending = useRef(new Set<string>());
   const alive = useRef(true);
   const epochRef = useRef(lineEpoch);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const load = async (kind: RankKind) => {
-    const reqEpoch = lineEpoch;
-    if (pending.current.has(kind)) return;
-    pending.current.add(kind);
+    const reqEpoch = epochRef.current;
+    const inflightKey = `${reqEpoch}:${kind}`;
+    if (pending.current.has(inflightKey)) return;
+    pending.current.add(inflightKey);
     const previous = cache.current[kind];
     const update = (state: RankState) => {
       cache.current[kind] = state;
@@ -226,13 +246,14 @@ export function RankPage({ onBack, wide }: { onBack: () => void; wide: boolean }
       if (reqEpoch !== epochRef.current) return;
       update({ items: previous?.items ?? [], loadedAt: previous?.loadedAt ?? 0, loading: false,
         error: error instanceof Error ? error.message : "榜单加载失败，请重试" });
-    } finally { pending.current.delete(kind); }
+    } finally { pending.current.delete(inflightKey); }
   };
   useEffect(() => {
     if (epochRef.current !== lineEpoch) {
       epochRef.current = lineEpoch;
       cache.current = {};
       pending.current.clear();
+      setStates({});
     }
     if (!cache.current[tab]?.loadedAt || Date.now() - cache.current[tab]!.loadedAt > 60_000) void load(tab);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -279,7 +300,7 @@ export function RankPage({ onBack, wide }: { onBack: () => void; wide: boolean }
             {loading && <p role="status" className="text-[12px] text-mut mb-2">正在刷新，当前显示上次榜单…</p>}
             <FilteredContent items={items} scopeKey={tab}>{visible => visible.map((it) => (
               <RankRow key={`${it.video_id}-${it.rank}`} item={it} metricMax={max}
-                onOpen={() => push({ kind: "feed", videoIds: items.map((x) => x.video_id), index: items.findIndex((x) => x.video_id === it.video_id), title: meta.label })} />
+                onOpen={() => push({ kind: "feed", videoIds: visible.map((x) => x.video_id), index: visible.findIndex((x) => x.video_id === it.video_id), title: meta.label })} />
             ))}</FilteredContent>
           </> : loading ? (
             <div className="flex justify-center py-12"><Loader label="正在加载榜单" className="w-8 h-8 spinner" /></div>

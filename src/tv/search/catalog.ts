@@ -22,7 +22,7 @@ function publish(origin: string, next: Partial<CatalogStatus>) {
 }
 function getWorker() {
   if (worker) return worker;
-  worker = new Worker(new URL("./index.worker.ts", import.meta.url), { type: "module" });
+  worker = new Worker(new URL("./index.worker.ts", import.meta.url));
   worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
     const promise = pending.get(event.data.requestId);
     if (!promise) return;

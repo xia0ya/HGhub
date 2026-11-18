@@ -80,11 +80,13 @@ fn serve(mut stream: TcpStream) -> std::io::Result<()> {
     if read_bounded_line(&mut reader, &mut request_line)? == 0 {
         return Ok(());
     }
+    let mut request = request_line.split_whitespace();
+    let method = request.next().unwrap_or_default();
+    let target = request.next().unwrap_or("/");
     let mut range = None;
     let mut range_count = 0;
     let mut if_range = false;
-    let mut host_ok = false;
-    let mut origin_ok = true;
+    let mut header_pairs = Vec::new();
     let mut header_count = 0;
     loop {
         let mut line = String::new();
@@ -93,14 +95,13 @@ fn serve(mut stream: TcpStream) -> std::io::Result<()> {
         }
         header_count += 1;
         if header_count > MAX_HEADERS {
-            return write_plain(&mut stream, 431, "request header fields too large");
+            return write_plain(&mut stream, method, 431, "request header fields too large");
         }
         if let Some((name, value)) = line.split_once(':') {
+            let name = name.trim();
             let value = value.trim();
-            if name.eq_ignore_ascii_case("Host") {
-                host_ok = matches!(value, "127.0.0.1:17650" | "localhost:17650");
-            } else if name.eq_ignore_ascii_case("Origin") {
-                origin_ok = value.is_empty() || value == "null" || crate::allowed_frontend_origin(value);
+            if name.eq_ignore_ascii_case("Host") || name.eq_ignore_ascii_case("Origin") {
+                header_pairs.push((name.to_owned(), value.to_owned()));
             } else if name.eq_ignore_ascii_case("Range") {
                 range_count += 1;
                 range = Some(value.to_owned());
@@ -109,15 +110,15 @@ fn serve(mut stream: TcpStream) -> std::io::Result<()> {
             }
         }
     }
-    if !host_ok || !origin_ok {
-        return write_plain(&mut stream, 403, "forbidden");
+    let borrowed: Vec<(&str, &str)> = header_pairs
+        .iter()
+        .map(|(n, v)| (n.as_str(), v.as_str()))
+        .collect();
+    if !headers_allowed(&borrowed) {
+        return write_plain(&mut stream, method, 403, "forbidden");
     }
-
-    let mut request = request_line.split_whitespace();
-    let method = request.next().unwrap_or_default();
-    let target = request.next().unwrap_or("/");
     if method != "GET" && method != "HEAD" {
-        return write_plain(&mut stream, 405, "method not allowed");
+        return write_plain(&mut stream, method, 405, "method not allowed");
     }
 
     let (path, query) = match target.split_once('?') {
@@ -174,8 +175,27 @@ fn write_response(
 
 #[cfg(test)]
 mod tests {
-    use super::write_response;
+    use super::{write_plain_to, write_response};
     use tauri::http::Response;
+
+    #[test]
+    fn duplicate_host_or_origin_headers_are_rejected_and_head_errors_omit_body() {
+        assert!(super::headers_allowed(&[("Host", "127.0.0.1:17650")]));
+        assert!(!super::headers_allowed(&[
+            ("Host", "evil.example"),
+            ("Host", "127.0.0.1:17650"),
+        ]));
+        assert!(!super::headers_allowed(&[
+            ("Host", "127.0.0.1:17650"),
+            ("Origin", "https://evil.example"),
+            ("Origin", "tauri://localhost"),
+        ]));
+        let mut wire = Vec::new();
+        write_plain_to(&mut wire, "HEAD", 403, "forbidden").unwrap();
+        let text = String::from_utf8(wire).unwrap();
+        assert!(text.contains("Content-Length: 9\r\n"));
+        assert!(text.ends_with("\r\n\r\n"));
+    }
 
     #[test]
     fn get_has_one_authoritative_length_and_cors_header() {
@@ -221,7 +241,28 @@ mod tests {
     }
 }
 
-fn write_plain(stream: &mut TcpStream, status: u16, message: &str) -> std::io::Result<()> {
+fn headers_allowed(headers: &[(&str, &str)]) -> bool {
+    let mut host_count = 0;
+    let mut host_ok = false;
+    let mut origin_count = 0;
+    let mut origin_ok = true;
+    for (name, value) in headers {
+        if name.eq_ignore_ascii_case("Host") {
+            host_count += 1;
+            host_ok = matches!(*value, "127.0.0.1:17650" | "localhost:17650");
+        } else if name.eq_ignore_ascii_case("Origin") {
+            origin_count += 1;
+            origin_ok = value.is_empty() || *value == "null" || crate::allowed_frontend_origin(value);
+        }
+    }
+    host_count == 1 && host_ok && origin_count <= 1 && origin_ok
+}
+
+fn write_plain(stream: &mut TcpStream, method: &str, status: u16, message: &str) -> std::io::Result<()> {
+    write_plain_to(stream, method, status, message)
+}
+
+fn write_plain_to(stream: &mut impl Write, method: &str, status: u16, message: &str) -> std::io::Result<()> {
     let reason = tauri::http::StatusCode::from_u16(status)
         .ok()
         .and_then(|code| code.canonical_reason())
@@ -232,6 +273,8 @@ fn write_plain(stream: &mut TcpStream, status: u16, message: &str) -> std::io::R
         body.len()
     );
     stream.write_all(head.as_bytes())?;
-    stream.write_all(body)?;
+    if method != "HEAD" {
+        stream.write_all(body)?;
+    }
     stream.flush()
 }

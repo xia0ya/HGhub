@@ -11,7 +11,8 @@ ad-hoc 签名都不应进入仓库或本机脚本输出。
 ## 事实来源
 
 - 前端脚本与版本：[`package.json`](../../package.json)、[`vite.config.ts`](../../vite.config.ts)、
-  [`tsconfig.json`](../../tsconfig.json)、[`tsconfig.tests.json`](../../tsconfig.tests.json)。
+  [`tsconfig.json`](../../tsconfig.json)、[`tsconfig.node.json`](../../tsconfig.node.json)、
+  [`tsconfig.tests.json`](../../tsconfig.tests.json)。
 - Tauri 配置：[`src-tauri/tauri.conf.json`](../../src-tauri/tauri.conf.json) 的
   `beforeBuildCommand`、`bundle`、`bundle.android.versionCode`；
   [`tauri.macos.conf.json`](../../src-tauri/tauri.macos.conf.json)、
@@ -42,13 +43,13 @@ ad-hoc 签名都不应进入仓库或本机脚本输出。
 ## 主运行时路径
 
 1. 安装依赖用 `pnpm install --frozen-lockfile`（CI 全部如此）。`pnpm build` 执行
-   `tsc --noEmit`、`tsc --project tsconfig.tests.json`、`vite build`；`vite.config.ts` 从
+   `tsc --noEmit`、`tsc --project tsconfig.node.json`、`tsc --project tsconfig.tests.json`、`vite build`；`vite.config.ts` 从
    `package.json` 注入 `__APP_VERSION__`，避免界面版本写死。
-   Vite 构建目标是 `["chrome66","safari14.1"]`（CSS 目标 `chrome66/safari13`），
-   `cssCodeSplit:false`、`cssMinify:false`；`scripts/legacy-css.ts`（enforce:post）在
-   generateBundle 阶段对汇总后的 CSS 做旧引擎回退（dvh、color-mix、cascade layers）、
-   追加 `src/styles/legacy-webview.css` 并用 lightningcss 压缩。Tailwind 插件以
-   `optimize:false` 运行，避免其内置优化先吃掉需要降级的语法。TV 构建脚本
+   Vite 构建目标是 `["chrome66","safari14.1"]`（CSS 目标 `chrome66/safari13`，Worker 格式
+   `iife` 以兼容无 module worker 的 Chromium 66–79），`cssCodeSplit:false`、`cssMinify:false`；
+   `scripts/legacy-css.ts`（enforce:post）在 generateBundle 阶段对汇总后的 CSS 做旧引擎回退
+   （dvh、color-mix、cascade layers）、追加 `src/styles/legacy-webview.css` 并用 lightningcss
+   压缩。Tailwind 插件以 `optimize:false` 运行，避免其内置优化先吃掉需要降级的语法。TV 构建脚本
    `build-android-tv.mjs` 复用同一 `pnpm build`，自动获得同一条兼容链。
 2. Tauri 构建的 `beforeBuildCommand` 在 Vite 构建后跑图标生成/同步和 Android 启动屏补丁
    （iOS 启动屏补丁由 `scripts/build-ios-unsigned.sh` 执行），再打包 `dist`。桌面入口为
@@ -63,9 +64,9 @@ ad-hoc 签名都不应进入仓库或本机脚本输出。
    `pnpm build`、尺寸预算。
    `rust`：Linux 系统依赖、`cargo check --all-targets`、`cargo test --lib`。
    `smoke`：安装 Chromium，解析 `BROWSER_EXECUTABLE`，运行 `pnpm test:smoke` 的四个稳定用例。
-5. `playback.yml` 和 `build-ios.yml` 都是 `workflow_dispatch`，不在每个 PR 自动跑。前者需要
-   FFmpeg + Chromium，按 `seek,legacy,lifecycle,gesture,proxy` 等场景输出诊断；后者只验证 iOS
-   工程能编出未签名 ipa。
+5. `playback.yml` 在 `push`（`main` 关键播放/网络/TV 路径变更）或 `workflow_dispatch` 时运行，
+   单次工作流内按矩阵并行执行 `core` 与 `extended`（含 `seek,legacy,lifecycle,gesture,proxy,recovery,tv`）；
+   `build-ios.yml` 为 `workflow_dispatch`，只验证 iOS 工程能编出未签名 ipa。
 6. `release.yml` 在推送 `v*` tag 或手动触发时运行；在分支上手动运行且 `tag` 留空时，
    只构建所选范围，不发布 GitHub Release。各平台构建 job 先跑
    `node scripts/set-version.mjs "$V"`：同步 `package.json`、`tauri.conf.json`（含
@@ -73,7 +74,8 @@ ad-hoc 签名都不应进入仓库或本机脚本输出。
    `versionCode = major*1_000_000 + minor*1_000 + patch`，minor/patch 超过 999 会报错。
 7. 平台产物：
    - Windows：NSIS 安装包 + `HGhubX_<version>_x64_portable.zip`。
-   - Android 标准版与 TV 版：复用 `android-build.yml` 执行 `pnpm tauri android build --apk --split-per-abi`，
+   - Android 标准版与 TV 版：复用 `android-build.yml` 执行 `pnpm tauri android build --apk --split-per-abi`
+     （正式发布编 `aarch64 armv7 x86_64`，`quick` 编 `aarch64 armv7`，显式 `android-arm64` 仅编 `aarch64`），
      按 ABI 产出并用 secrets 中的 keystore `apksigner` 签名，文件名分别为
      `HGhubX_<version>_<abi>.apk` 与 `HGhubX-TV_<version>_<abi>.apk`；随后 `aapt2 dump badging`
      打印实际 versionCode。

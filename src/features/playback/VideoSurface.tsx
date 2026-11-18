@@ -1,16 +1,18 @@
-import { useEffect, useLayoutEffect, useImperativeHandle, useRef, forwardRef, useState } from "react";
+import { useEffect, useLayoutEffect, useImperativeHandle, useRef, forwardRef, useState, type MutableRefObject } from "react";
 import Hls from "hls.js";
 import { platform } from "../../shared/api/api";
 import { connectNativeMedia, playbackSource } from "./mediaTransport";
 import { mediaErrorMessage } from "./mediaErrors";
-import { mediaHost, mediaResource, observeHls, usePlayerDiagnostics } from "../../shared/diagnostics/playbackDiagnostics";
+import { mediaHost, mediaResource, observeHls, registerHlsVersion, usePlayerDiagnostics } from "../../shared/diagnostics/playbackDiagnostics";
 import { usePlaybackActivity } from "./usePlaybackActivity";
 import { useProxyPlaybackRecovery } from "./useProxyPlaybackRecovery";
 import { createHlsRecovery, type HlsRecovery } from "./hlsRecovery";
 
+if (Hls.version) registerHlsVersion(Hls.version);
+
 export type VideoHandle = {
   el: () => HTMLVideoElement | null;
-  play: () => void;
+  play: (source?: string, automatic?: boolean) => void;
   retry: () => void;
   pause: () => void;
   toggle: () => void;
@@ -19,6 +21,8 @@ export type VideoHandle = {
   rate: (r: number) => void;
   mute: (m: boolean) => void;
   volume: (v: number) => void;
+  isActive: () => boolean;
+  isPlayWanted: () => boolean;
 };
 
 type Props = {
@@ -26,6 +30,8 @@ type Props = {
   poster?: string;
   autoPlay?: boolean;
   active?: boolean;
+  fadeIn?: boolean;
+  videoElementRef?: MutableRefObject<HTMLVideoElement | null>;
   measurementKey?: string;
   diagnosticContext?: Record<string, unknown>;
   muted?: boolean;
@@ -37,19 +43,22 @@ type Props = {
   onTime?: (t: number) => void;
   onDuration?: (d: number) => void;
   onSize?: (w: number, h: number, measurementKey: string) => boolean | void;
+  onPlay?: () => void;
   onPlaying?: () => void;
   onPause?: () => void;
   onWaiting?: () => void;
+  onSeeked?: () => void;
   onEnded?: () => void;
   onError?: (msg: string) => void;
+  onClearError?: () => void;
   onClick?: () => void;
   className?: string;
 };
 
 /** 只负责「播」：hls.js + video 元素，控制条由外层渲染。 */
 const VideoSurface = forwardRef<VideoHandle, Props>(function VideoSurface(
-  { src, poster, autoPlay = true, active = true, measurementKey = src, diagnosticContext = {}, muted = false, loop = false, fit = "contain", volume = 1, rate = 1,
-    onTime, onDuration, onSize, onPlaying, onPause, onWaiting, onEnded, onError, onClick, className = "" },
+  { src, poster, autoPlay = true, active = true, fadeIn = true, videoElementRef, measurementKey = src, diagnosticContext = {}, muted = false, loop = false, fit = "contain", volume = 1, rate = 1,
+    onTime, onDuration, onSize, onPlay, onPlaying, onPause, onWaiting, onSeeked, onEnded, onError, onClearError, onClick, className = "" },
   ref,
 ) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -89,7 +98,7 @@ const VideoSurface = forwardRef<VideoHandle, Props>(function VideoSurface(
 
   useImperativeHandle(ref, () => ({
     el: () => videoRef.current,
-    play: () => activity.play("handle"),
+    play: (source = "handle", automatic = false) => activity.play(source, automatic),
     retry: () => { if (activity.isActive()) proxyRecovery.retry("manual", true); },
     pause: () => activity.pause(),
     toggle: () => {
@@ -116,11 +125,14 @@ const VideoSurface = forwardRef<VideoHandle, Props>(function VideoSurface(
     rate: (r: number) => { const v = videoRef.current; if (v) v.playbackRate = r; },
     mute: (m: boolean) => { const v = videoRef.current; if (v) v.muted = m; },
     volume: (vol: number) => { const v = videoRef.current; if (v) v.volume = vol; },
+    isActive: () => activity.isActive(),
+    isPlayWanted: () => activity.isPlayWanted(),
   }), []);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !src) return;
+    onClearError?.();
     attachedSource.current = null;
     setReady(false);
     reportedSizeRef.current = { key: "", w: 0, h: 0 };
@@ -176,21 +188,31 @@ const VideoSurface = forwardRef<VideoHandle, Props>(function VideoSurface(
         isActive: activity.isActive,
         resumePlayback: () => activity.play("media_recovery", true),
         onFatal: data => {
-          onError?.(`${data.type}/${data.details}`);
+          const detail = `${data.type}/${data.details}/${data.response?.code ?? ""}/${String(data.reason ?? "").slice(0, 80)}`;
+          (window as unknown as { __hlsErr?: string }).__hlsErr = detail;
+          const readable = data.type === Hls.ErrorTypes.NETWORK_ERROR
+            ? "视频网络加载失败，请检查线路或重试"
+            : data.type === Hls.ErrorTypes.MEDIA_ERROR
+              ? "视频解码异常，请重试"
+              : "视频暂时无法播放，请重试";
+          onError?.(readable);
           if (data.type !== Hls.ErrorTypes.NETWORK_ERROR && data.type !== Hls.ErrorTypes.MEDIA_ERROR) {
             hls.destroy(); hlsRef.current = null;
           }
         },
       });
       recoveryRef.current = recovery;
-      observeHls(hls, trace);
+      observeHls(hls, trace, Hls.Events);
       hls.loadSource(source.url);
       hls.attachMedia(video);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         if (activity.isActive()) hls.startLoad(resume?.time ?? -1);
         if (autoPlay && !resume) activity.play("manifest_autoplay", true);
       });
-      hls.on(Hls.Events.FRAG_BUFFERED, () => recovery.buffered());
+      hls.on(Hls.Events.FRAG_BUFFERED, () => {
+        recovery.buffered();
+        onClearError?.();
+      });
       hls.on(Hls.Events.ERROR, (_e, data) => recovery.error(data));
     } else {
       disconnectNative = connectNativeMedia(video, source, {
@@ -236,15 +258,18 @@ const VideoSurface = forwardRef<VideoHandle, Props>(function VideoSurface(
 
   return (
     <video
-      ref={videoRef}
+      ref={(node) => {
+        videoRef.current = node;
+        if (videoElementRef) videoElementRef.current = node;
+      }}
       poster={poster}
       playsInline
-      preload="auto"
+      preload={active ? "auto" : "metadata"}
       muted={muted}
       loop={loop}
       onClick={onClick}
       className={`w-full h-full bg-black ${fit === "cover" ? "object-cover" : "object-contain"} ${className}`}
-      style={{ opacity: ready ? 1 : 0, transition: "opacity .35s" }}
+      style={fadeIn ? { opacity: ready ? 1 : 0, transition: "opacity .35s" } : undefined}
       onLoadedData={(e) => {
         const v = e.target as HTMLVideoElement;
         setReady(true);
@@ -268,9 +293,10 @@ const VideoSurface = forwardRef<VideoHandle, Props>(function VideoSurface(
         onDuration?.(v.duration || 0);
         reportSize(v);
       }}
-      onPlay={() => { if (activity.isActive()) onPlaying?.(); }}
+      onPlay={() => { if (activity.isActive()) { onPlay?.(); onPlaying?.(); } }}
       onPause={() => onPause?.()}
       onWaiting={() => onWaiting?.()}
+      onSeeked={() => onSeeked?.()}
       onPlaying={(e) => {
         reportSize(e.target as HTMLVideoElement);
         if (activity.isActive()) onPlaying?.();

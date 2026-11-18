@@ -12,6 +12,7 @@ src/
 ├── legacyRuntime.ts          旧版 Chromium / Safari 运行时 API 兼容垫片
 ├── main.tsx                  标准版 React 挂载与启动初始化
 ├── app/
+│   ├── AcceptedApp.tsx      协议确认后的应用装配（AppProvider + 自动选线 + App）
 │   ├── App.tsx              页面栈、布局、全局返回与键盘处理
 │   ├── shell/               桌面标题栏、侧栏、窗口缩放热区
 │   └── startup/             启动动画与使用协议门
@@ -58,7 +59,7 @@ Feed 与评论、选集、详情面板放在 `features/feed/`。跨功能使用�
 ## 共享状态的当前边界
 
 [`shared/model/store.tsx`](../src/shared/model/store.tsx) 仍是一个应用 Provider，聚合导航、
-主题、账号与播放偏好；这次只整理文件归属，没有拆状态订阅或改变渲染更新方式。
+主题、账号与播放偏好；Toast 列表通过独立的 `useToasts()`（`useSyncExternalStore`）订阅，避免提示弹层触发全树重渲染。
 
 `store` 调用同目录的 `accountData` 处理账号数据缓存与同步。`accountData` 对 `store`
 中的 `WatchProgress` 仅有类型引用，须保留 `import type`；`contentPreferences` 仍是独立的

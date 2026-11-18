@@ -1,21 +1,11 @@
 import { LOCAL } from "../api/api";
 import DOMPurify from "dompurify";
+import { isStrictSecurity, setStrictSecurity } from "./securityMode";
+
+export { isStrictSecurity, setStrictSecurity };
 
 /** 站点根地址：正文里的相对路径要补全 */
 const SITE = "https://huangguoai.com";
-// 启动前默认严格；有效状态只由 Rust app_boot / security_set 返回值更新。
-let strictSecurity = true;
-
-/** 当前是否启用严格安全模式（默认开启）。 */
-export function isStrictSecurity(): boolean {
-  return strictSecurity;
-}
-
-/** 切换严格安全模式（关闭后回退为兼容清洗与链接策略）。 */
-export function setStrictSecurity(strict: boolean): void {
-  strictSecurity = strict;
-
-}
 
 function isInternalWebviewHost(host: string): boolean {
   const h = host.replace(/\.+$/, "").toLowerCase();
@@ -60,7 +50,7 @@ function isPrivateOrLocalHost(host: string): boolean {
 }
 
 /** 把各种写法的图片地址补成绝对地址；占位符（data:）返回空串 */
-function abs(raw: string, strict = strictSecurity): string {
+function abs(raw: string, strict = isStrictSecurity()): string {
   const s = (raw || "").trim();
   if (!s) return "";
   try {
@@ -73,7 +63,7 @@ function abs(raw: string, strict = strictSecurity): string {
 }
 
 /** 把正文里的图片换成走本地协议（带 Referer / 解密能力） */
-function proxyImages(html: string, strict = strictSecurity): string {
+function proxyImages(html: string, strict = isStrictSecurity()): string {
   if (!html) return "";
   const doc = new DOMParser().parseFromString(html, "text/html");
   const imgPrefix = `${LOCAL}/img?u=`;
@@ -134,7 +124,7 @@ const SAFE_FINAL_URI = /^(?:(?:https?|ftp|ftps|tel|mailto|callto|sms|cid|xmpp|ma
 export function sanitizeHtml(html: string): string {
   // 不支持清洗器的旧 WebView 必须拒绝正文，不能回退为原样渲染。
   if (!html || !DOMPurify.isSupported) return "";
-  if (!strictSecurity) {
+  if (!isStrictSecurity()) {
     const pre = DOMPurify.sanitize(html, {
       USE_PROFILES: { html: true },
       ADD_ATTR: ["data-src", "data-original", "data-lazy-src"],
@@ -176,6 +166,6 @@ export function handleArticleClick(
   if (!el) return;
   e.preventDefault();
   e.stopPropagation();
-  const href = abs(el.getAttribute("href") || "", strictSecurity);
+  const href = abs(el.getAttribute("href") || "", isStrictSecurity());
   if (href && onOpenUrl) onOpenUrl(href);
 }

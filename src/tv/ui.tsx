@@ -18,7 +18,11 @@ export function TvModal({ id, title, onClose, children }: { id: string; title: s
   const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const trigger = document.activeElement as HTMLElement;
-    focusElement(focusables(ref.current!)[0]);
+    const root = ref.current!;
+    const preferred = root.querySelector<HTMLElement>("[data-tv-initial], [aria-pressed='true'], [aria-current='true']")
+      || focusables(root).find(el => !el.closest("header"))
+      || focusables(root)[0];
+    focusElement(preferred);
     return () => { requestAnimationFrame(() => { if (trigger?.isConnected) focusElement(trigger); }); };
   }, []);
   useRemoteScope({ id, priority: 100, onKey: key => { if (key === "back") { onClose(); return true; } } });

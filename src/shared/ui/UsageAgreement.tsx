@@ -17,7 +17,7 @@ export function UsageAgreementText() {
   </div>;
 }
 
-export default function UsageAgreement({ onAccept, registerBack }: { onAccept: () => void; registerBack?: RegisterStartupBack }) {
+export default function UsageAgreement({ onAccept, registerBack, active = true }: { onAccept: () => void; registerBack?: RegisterStartupBack; active?: boolean }) {
   const titleRef = useRef<HTMLHeadingElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [confirmed, setConfirmed] = useState(false);
@@ -25,9 +25,9 @@ export default function UsageAgreement({ onAccept, registerBack }: { onAccept: (
   const [error, setError] = useState("");
   const [exiting, setExiting] = useState(false);
 
-  useEffect(() => { titleRef.current?.focus({ preventScroll: true }); }, [declined]);
+  useEffect(() => { if (active) titleRef.current?.focus({ preventScroll: true }); }, [active, declined]);
   useEffect(() => {
-    if (registerBack) return;
+    if (!active || registerBack) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") { event.preventDefault(); event.stopImmediatePropagation(); setDeclined(true); }
       if (event.key !== "Tab") return;
@@ -42,8 +42,9 @@ export default function UsageAgreement({ onAccept, registerBack }: { onAccept: (
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [registerBack]);
+  }, [active, registerBack]);
   useEffect(() => {
+    if (!active) return;
     if (registerBack) return registerBack(() => setDeclined(true));
     if (platform !== "android") return;
     let disposed = false;
@@ -53,7 +54,7 @@ export default function UsageAgreement({ onAccept, registerBack }: { onAccept: (
       else listener = handle;
     }).catch(() => {});
     return () => { disposed = true; void listener?.unregister().catch(() => {}); };
-  }, [registerBack]);
+  }, [active, registerBack]);
 
   const accept = () => {
     if (!confirmed) return;
@@ -71,7 +72,7 @@ export default function UsageAgreement({ onAccept, registerBack }: { onAccept: (
     void invoke("plugin:app|exit", { code: 0 }).catch(() => setError("应用尚未进入主界面，你可以直接关闭窗口。")).finally(() => setExiting(false));
   };
 
-  return <div className="hg-agreement" data-tv-modal="agreement" role="dialog" aria-modal="true" aria-labelledby="hg-agreement-title" aria-describedby="hg-agreement-summary">
+  return <div className="hg-agreement" inert={!active} data-tv-modal={active ? "agreement" : undefined} role="dialog" aria-modal="true" aria-labelledby="hg-agreement-title" aria-describedby="hg-agreement-summary">
     <div ref={panelRef} className="hg-agreement-card">
       <header className="hg-agreement-header">
         <h1 ref={titleRef} tabIndex={-1} id="hg-agreement-title">{declined ? "应用尚未启动" : "使用条款与免责声明"}</h1>

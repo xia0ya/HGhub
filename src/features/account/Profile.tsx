@@ -2,7 +2,7 @@ import { Button, SegmentedControl, Surface } from "../../shared/ui/ios/controls"
 import { Loader } from "../../shared/ui/ios/effects";
 import { useEffect, useRef, useState } from "react";
 import { api, APP_VERSION, fmt, fmtTime, isMobile, platform } from "../../shared/api/api";
-import type { Detail } from "../../shared/api/types";
+import type { Detail, Post } from "../../shared/api/types";
 import { useStore } from "../../shared/model/store";
 import { Avatar, Empty, Modal } from "../../shared/ui/ui";
 import { MediaCard } from "../../shared/ui/cards";
@@ -11,19 +11,26 @@ import { CollectionLink, CollectionLinks } from "../../shared/ui/CollectionLink"
 import { IChevR, IClock, IHeart, ILogout, ISettings, IStar, IUser, IUserF } from "../../shared/ui/icons";
 
 /* Account changes discard cached details synchronously, before another account can paint. */
-export default function Profile({ wide }: { wide: boolean }) {
+export default function Profile({ wide, active = true }: { wide: boolean; active?: boolean }) {
   const { accountScope, lineEpoch } = useStore();
-  return <ProfileContent key={`${accountScope}:${lineEpoch}`} wide={wide} />;
+  return <ProfileContent key={`${accountScope}:${lineEpoch}`} wide={wide} active={active} />;
 }
 
-function ProfileContent({ wide }: { wide: boolean }) {
+function ProfileContent({ wide, active }: { wide: boolean; active: boolean }) {
   const { blockReason } = useContentPreferences();
-  const { user, setLoginOpen, logout, history, favs, clearHistory, push, accountSync, syncAccount } = useStore();
+  const {
+    user, setLoginOpen, logout, history, favs, postFavs, setCollected, toast,
+    clearHistory, push, accountSync, syncAccount,
+  } = useStore();
   const [tab, setTab] = useState<"fav" | "history">("fav");
-  const [cache, setCache] = useState<Record<number, Detail>>({});
-  const cacheRef = useRef(cache);
-  cacheRef.current = cache;
-  const [limits, setLimits] = useState({ fav: 12, history: 12 });
+  const [favKind, setFavKind] = useState<"video" | "post">("video");
+  const [videoCache, setVideoCache] = useState<Record<number, Detail>>({});
+  const videoCacheRef = useRef(videoCache);
+  videoCacheRef.current = videoCache;
+  const [postCache, setPostCache] = useState<Record<number, Post>>({});
+  const postCacheRef = useRef(postCache);
+  postCacheRef.current = postCache;
+  const [limits, setLimits] = useState({ favVideo: 12, favPost: 12, history: 12 });
   const [failedIds, setFailedIds] = useState<number[]>([]);
   const [reload, setReload] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -35,41 +42,68 @@ function ProfileContent({ wide }: { wide: boolean }) {
   const [clearBusy, setClearBusy] = useState(false);
   const [clearError, setClearError] = useState("");
   const clearing = useRef(false);
+  const [blockedPrompt, setBlockedPrompt] = useState<{
+    id: number; kind: "video" | "post"; reason: string; removableFav: boolean;
+  } | null>(null);
+  const [removingBlocked, setRemovingBlocked] = useState(false);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
-  const ids = tab === "fav" ? favs : history.map((h) => h.id);
-  const visibleIds = ids.slice(0, limits[tab]);
-  const cards = visibleIds.map(id => cache[id]).filter((card): card is Detail => !!card);
+  const showingPosts = tab === "fav" && favKind === "post";
+  const limitKey = tab === "history" ? "history" : showingPosts ? "favPost" : "favVideo";
+  const ids = tab === "history" ? history.map((h) => h.id) : showingPosts ? postFavs : favs;
+  const visibleIds = ids.slice(0, limits[limitKey]);
+  const videoCards = !showingPosts ? visibleIds.map(id => videoCache[id]).filter((card): card is Detail => !!card) : [];
+  const postCards = showingPosts ? visibleIds.map(id => postCache[id]).filter((card): card is Post => !!card) : [];
+  const cardsCount = showingPosts ? postCards.length : videoCards.length;
   const failed = failedIds.filter(id => visibleIds.includes(id));
   const idsKey = visibleIds.join(",");
-  const favoriteStateUnknown = tab === "fav" && !!user && !accountSync.favoritesKnown && favs.length === 0;
+  const favoriteStateUnknown = tab === "fav" && !!user && !accountSync.favoritesKnown && favs.length === 0 && postFavs.length === 0;
   const favoriteSyncFailed = favoriteStateUnknown && !accountSync.busy;
   const syncingFavorites = favoriteStateUnknown && !favoriteSyncFailed;
   /** 观看记录里这条的进度（收藏页没有） */
   const progressOf = (id: number) => (tab === "history" ? history.find((h) => h.id === id) : undefined);
 
   useEffect(() => {
+    if (!active) return;
     let alive = true;
-    const missing = visibleIds.filter(id => !cacheRef.current[id]);
+    const missing = showingPosts
+      ? visibleIds.filter(id => !postCacheRef.current[id])
+      : visibleIds.filter(id => !videoCacheRef.current[id]);
     setFailedIds([]);
     if (!missing.length) { setLoading(false); return; }
     setLoading(true);
-    Promise.allSettled(missing.map(id => api.video(id)))
-      .then(results => {
-        if (!alive) return;
-        const loaded: Record<number, Detail> = {};
-        const failed: number[] = [];
-        results.forEach((result, index) => {
-          if (result.status === "fulfilled") loaded[missing[index]] = result.value;
-          else failed.push(missing[index]);
+    if (showingPosts) {
+      Promise.allSettled(missing.map(id => api.post(id)))
+        .then(results => {
+          if (!alive) return;
+          const loaded: Record<number, Post> = {};
+          const failedList: number[] = [];
+          results.forEach((result, index) => {
+            if (result.status === "fulfilled" && result.value) loaded[missing[index]] = result.value;
+            else failedList.push(missing[index]);
+          });
+          setPostCache(previous => ({ ...previous, ...loaded }));
+          setFailedIds(failedList);
+          setLoading(false);
         });
-        setCache(previous => ({ ...previous, ...loaded }));
-        setFailedIds(failed);
-        setLoading(false);
-      });
+    } else {
+      Promise.allSettled(missing.map(id => api.video(id)))
+        .then(results => {
+          if (!alive) return;
+          const loaded: Record<number, Detail> = {};
+          const failedList: number[] = [];
+          results.forEach((result, index) => {
+            if (result.status === "fulfilled" && result.value) loaded[missing[index]] = result.value;
+            else failedList.push(missing[index]);
+          });
+          setVideoCache(previous => ({ ...previous, ...loaded }));
+          setFailedIds(failedList);
+          setLoading(false);
+        });
+    }
     return () => { alive = false; };
-  }, [idsKey, tab, reload]);
+  }, [active, idsKey, tab, showingPosts, reload]);
 
   const confirmLogout = async () => {
     if (logoutPending.current) return;
@@ -104,7 +138,7 @@ function ProfileContent({ wide }: { wide: boolean }) {
 
   return (
     <div className="ios-page absolute inset-0 bg-bg flex flex-col">
-      <div className="ios-page-heading shrink-0 px-4 flex items-center">
+      <div className="ios-page-heading shrink-0 flex items-center">
         <h1 className="ios-page-title text-on">我的</h1>
         {isMobile && (
           <Button onClick={() => push({ kind: "settings" })} aria-label="设置"
@@ -114,7 +148,7 @@ function ProfileContent({ wide }: { wide: boolean }) {
         )}
       </div>
 
-      <div className="ios-page-body flex-1 scroll-y px-4 pt-2 pb-24">
+      <div className="ios-page-body flex-1 scroll-y pt-2 pb-24">
         {/* 资料卡：已登录 / 未登录（点开登录抽屉） */}
         {user ? (
           <Surface className="ios-account-card flex items-center gap-3.5 a-rise">
@@ -141,7 +175,7 @@ function ProfileContent({ wide }: { wide: boolean }) {
               <div className="text-[16px] font-bold text-on">未登录</div>
               <div className="text-[12px] text-mut mt-0.5">登录后查看账号收藏、关注和观看记录</div>
               <div className="flex gap-3 mt-2 text-[12px] text-mut">
-                <span>收藏 <b className="text-on">{favs.length}</b></span>
+                <span>收藏 <b className="text-on">{favs.length + postFavs.length}</b></span>
                 <span>观看 <b className="text-on">{history.length}</b></span>
               </div>
             </div>
@@ -154,7 +188,7 @@ function ProfileContent({ wide }: { wide: boolean }) {
         {user && accountSync.error && <div role="alert" className="mt-3 rounded-(--r-sm) bg-s3 p-3 text-[13px]">
           <p className="text-danger break-words">{accountSync.error}</p>
           <Button disabled={accountSync.busy} onClick={() => { void syncAccount().catch(() => {}); }}
-            className="mt-1 min-h-11 px-3 text-on">{accountSync.busy ? "正在重试…" : "重试同步"}</Button>
+            className="mt-1 min-h-11 px-3 text-primary">{accountSync.busy ? "正在重试…" : "重试同步"}</Button>
         </div>}
 
         {/* 关注 / 我的主页 */}
@@ -174,6 +208,17 @@ function ProfileContent({ wide }: { wide: boolean }) {
           ))}
         </SegmentedControl>
 
+        {tab === "fav" && !favoriteStateUnknown && (favs.length > 0 || postFavs.length > 0 || favKind === "post") && (
+          <div className="mt-2.5 flex items-center gap-2" role="group" aria-label="收藏内容类型">
+            <Button aria-pressed={favKind === "video"} onClick={() => setFavKind("video")} className="ios-filter-pill">
+              短剧{favs.length ? ` ${favs.length}` : ""}
+            </Button>
+            <Button aria-pressed={favKind === "post"} onClick={() => setFavKind("post")} className="ios-filter-pill">
+              帖子{postFavs.length ? ` ${postFavs.length}` : ""}
+            </Button>
+          </div>
+        )}
+
         <div className="mt-3" aria-busy={loading || syncingFavorites}>
           {favoriteSyncFailed ? (
             <Empty icon={<IStar size={24} />} title="收藏状态未知"
@@ -181,39 +226,67 @@ function ProfileContent({ wide }: { wide: boolean }) {
               onAction={() => { void syncAccount().catch(() => {}); }} />
           ) : syncingFavorites ? (
             <FavoriteSyncState wide={wide} />
-          ) : loading && !cards.length ? (
+          ) : loading && !cardsCount ? (
             <div className="flex justify-center py-8"><Loader className="w-7 h-7 spinner" /></div>
-          ) : cards.length ? (
+          ) : showingPosts && postCards.length ? (
             <div className={`ios-media-grid ${wide ? "is-wide" : ""}`}>
-              {cards.map((c) => {
+              {postCards.map((p) => {
+                const reason = blockReason(p.tags);
+                return <MediaCard key={p.id} blockedReason={reason} title={p.title} cover={p.cover}
+                  subtitle={p.tags?.slice(0, 2).join(" · ") || `${fmt(p.hot)} 次浏览`}
+                  onOpen={() => {
+                    if (reason) setBlockedPrompt({ id: p.id, kind: "post", reason, removableFav: true });
+                    else push({ kind: "post", id: p.id });
+                  }} />;
+              })}
+            </div>
+          ) : !showingPosts && videoCards.length ? (
+            <div className={`ios-media-grid ${wide ? "is-wide" : ""}`}>
+              {videoCards.map((c) => {
                 const progress = progressOf(c.id);
-                return <MediaCard key={c.id} blockedReason={blockReason(c.tags)} title={c.title} cover={c.cover} score={c.score}
+                const reason = blockReason(c.tags);
+                return <MediaCard key={c.id} blockedReason={reason} title={c.title} cover={c.cover} score={c.score}
                   badge={c.is_finished ? "已完结" : `${c.episode_count} 集`}
                   subtitle={c.tags?.slice(0, 2).join(" · ")}
-                  progress={progress ? `第 ${progress.ep} 集 · ${fmtTime(progress.t)}` : undefined}
-                  onOpen={() => push({
-                    kind: "feed", videoIds: cards.map(x => x.id), index: cards.findIndex(x => x.id === c.id),
-                    title: tab === "fav" ? "我的收藏" : "观看历史", startEp: progress?.ep, startTime: progress?.t,
-                  })} />;
+                  progress={progress ? (progress.t >= 1 ? `第 ${progress.ep} 集 · ${fmtTime(progress.t)}` : `第 ${progress.ep} 集`) : undefined}
+                  onOpen={() => {
+                    if (reason) {
+                      setBlockedPrompt({ id: c.id, kind: "video", reason, removableFav: tab === "fav" });
+                      return;
+                    }
+                    const playableIds = ids.filter(id => {
+                      const cached = videoCache[id];
+                      return !cached || !blockReason(cached.tags);
+                    });
+                    const targetIndex = Math.max(0, playableIds.indexOf(c.id));
+                    push({
+                      kind: "feed", videoIds: playableIds, index: targetIndex,
+                      title: tab === "fav" ? "我的收藏" : "观看历史", startEp: progress?.ep, startTime: progress?.t,
+                    });
+                  }} />;
               })}
             </div>
           ) : failed.length ? (
             <Empty icon={tab === "fav" ? <IStar size={24} /> : <IClock size={24} />}
               title={tab === "fav" ? "收藏加载失败" : "观看记录加载失败"}
               sub="记录仍在，重试后继续浏览。" action="重试" onAction={() => setReload(n => n + 1)} />
+          ) : showingPosts ? (
+            <Empty icon={<IStar size={24} />} title="还没有收藏帖子"
+              sub="在吃瓜页面点收藏，之后就能在这里找到"
+              action="去看吃瓜" onAction={() => push({ kind: "posts" })} />
           ) : (
             <Empty icon={tab === "fav" ? <IStar size={24} /> : <IClock size={24} />}
               title={tab === "fav" ? "还没有收藏" : "还没有观看记录"}
               sub={tab === "fav" ? "在剧集页点收藏，之后就能在这里找到" : "看过的剧集会出现在这里"}
               action="去逛逛" onAction={() => push({ kind: "ranks" })} />
           )}
-          {cards.length > 0 && failed.length > 0 && <div role="status" className="mt-3 flex flex-wrap items-center gap-2 text-[13px] text-mut">
+          {cardsCount > 0 && failed.length > 0 && <div role="status" className="mt-3 flex flex-wrap items-center gap-2 text-[13px] text-mut">
             <span>{failed.length} 项内容加载失败，已加载内容仍可浏览。</span>
             <Button disabled={loading} onClick={() => setReload(n => n + 1)} className="px-3 text-primary">重试失败内容</Button>
           </div>}
-          {cards.length > 0 && loading && <div className="flex justify-center py-3"><Loader label="加载更多内容" /></div>}
-          {ids.length > 0 && <p role="status" className="mt-3 text-[12px] text-mut">已显示 {cards.length} / {ids.length} 项{user ? "账号记录" : "本机记录"}</p>}
-          {visibleIds.length < ids.length && <Button disabled={loading} onClick={() => setLimits(previous => ({ ...previous, [tab]: previous[tab] + 12 }))}
+          {cardsCount > 0 && loading && <div className="flex justify-center py-3"><Loader label="加载更多内容" /></div>}
+          {ids.length > 0 && <p role="status" className="mt-3 text-[12px] text-mut">已显示 {cardsCount} / {ids.length} 项{user ? "账号记录" : "本机记录"}</p>}
+          {visibleIds.length < ids.length && <Button disabled={loading} onClick={() => setLimits(previous => ({ ...previous, [limitKey]: previous[limitKey] + 12 }))}
             className="mt-3 w-full rounded-(--r-ctl) bg-s3 text-[13px] text-on">加载更多</Button>}
           {tab === "history" && history.length > 0 && (
             <Button disabled={clearBusy} aria-busy={clearBusy} onClick={() => { setClearError(""); setClearOpen(true); }} className="mt-3 w-full h-9 rounded-(--r-ctl) bg-s3 text-[13px] text-mut pressable">{clearBusy ? "正在清空…" : "清空观看历史"}</Button>
@@ -223,6 +296,34 @@ function ProfileContent({ wide }: { wide: boolean }) {
 
         <div className="text-center text-[12px] text-dim mt-5">HGhubX {APP_VERSION} · {platform === "android" ? "Android" : platform === "ios" ? "iOS" : platform === "macos" ? "macOS" : platform === "linux" ? "Linux" : "Windows"} 客户端</div>
       </div>
+      <Modal open={!!blockedPrompt} onClose={() => { if (!removingBlocked) setBlockedPrompt(null); }} label="内容已屏蔽">
+        {blockedPrompt && (
+          <div className="p-5">
+            <h2 className="text-[18px] font-bold">该内容命中屏蔽规则</h2>
+            <p className="mt-2 text-[14px] text-mut break-words">{blockedPrompt.reason}。你可以在内容偏好中调整屏蔽标签{blockedPrompt.removableFav ? "，或将此内容移出收藏" : ""}。</p>
+            <div className="mt-4 flex flex-wrap gap-2.5">
+              <Button variant="secondary" disabled={removingBlocked} onClick={() => setBlockedPrompt(null)} className="flex-1">关闭</Button>
+              {blockedPrompt.removableFav && (
+                <Button variant="danger" disabled={removingBlocked} onClick={() => {
+                  setRemovingBlocked(true);
+                  void setCollected(blockedPrompt.kind, blockedPrompt.id, false)
+                    .then(() => { if (mounted.current) { setBlockedPrompt(null); toast("已取消收藏", "info"); } })
+                    .catch(e => { if (mounted.current) toast(e instanceof Error ? e.message : "操作失败", "info"); })
+                    .finally(() => { if (mounted.current) setRemovingBlocked(false); });
+                }} className="flex-1 rounded-(--r-ctl) px-3">
+                  {removingBlocked ? "处理中…" : "取消收藏"}
+                </Button>
+              )}
+              <Button variant="primary" disabled={removingBlocked} onClick={() => {
+                setBlockedPrompt(null);
+                push({ kind: "settings", section: "内容偏好" });
+              }} className="w-full rounded-(--r-ctl) min-h-11 px-4 font-semibold">
+                管理屏蔽标签
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
       <Modal open={logoutOpen} onClose={() => { if (!logoutPending.current) setLogoutOpen(false); }} label="退出登录">
         <div className="p-5">
           <h2 className="text-[18px] font-bold">退出登录</h2>
