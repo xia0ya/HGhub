@@ -2,7 +2,7 @@
 // Real TV bootstrap/components/Worker/IndexedDB. All IPC/media remain fixtures.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -114,7 +114,13 @@ try {
     optimizeDeps: { include: ["pinyin-pro"] },
     server: { host: "127.0.0.1", port: 0, strictPort: false, hmr: false, open: false } });
   await vite.listen(); origin = `http://127.0.0.1:${vite.httpServer.address().port}`;
-  browser = await chromium.launch({ headless: true, executablePath: process.env.BROWSER_EXECUTABLE || chromium.executablePath(), args: ["--autoplay-policy=no-user-gesture-required"] });
+  let executablePath = process.env.BROWSER_EXECUTABLE;
+  if (!executablePath) {
+    for (const candidate of ["/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"]) {
+      if (await access(candidate).then(() => true, () => false)) { executablePath = candidate; break; }
+    }
+  }
+  browser = await chromium.launch({ headless: true, executablePath: executablePath || chromium.executablePath(), args: ["--autoplay-policy=no-user-gesture-required"] });
   report.browser = browser.version();
   await scenario("history-shelf-width-loading-ready", async () => {
     const { page } = await open({ fixture: { heldDetailIds: [1, 2, 3], legacy: { history: [1, 2, 3].map((id, index) => ({ id, ep: 1, t: 5, dur: 60, at: 30 - index })) } },

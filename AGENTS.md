@@ -26,7 +26,7 @@ make check
 
 - `pnpm build` 执行两份 TypeScript 检查和 Vite 构建。
 - `pnpm test:smoke` 运行不需要 ffmpeg、真实 Tauri 宿主或上游网络的稳定浏览器用例。
-- `make check` 当前执行 `test-rust`、`test-web`、`docs`、`budget`；**不包含** `test:smoke`。
+- `make check` 当前执行 `test-rust`、`test-web`、`docs`、`budget`、`release-check`；**不包含** `test:smoke`。
 - `make release-check` 检查版本字段和 Android `versionCode`；发版由 CI 执行，不在本地发布。
 - 完整播放回归用 `pnpm test:playback`；它需要 FFmpeg 和 Chromium，属于手动诊断而非 PR smoke。
 
@@ -36,11 +36,12 @@ CI 是验证记录。命令写了不等于已经运行；报告里必须写清�
 
 ### 前端
 
-- `src/main.tsx`：挂载 React、启动诊断，并在使用协议确认后装配应用 Provider 和自动选线。
+- `src/editionEntry.ts`、`src/legacyRuntime.ts`、`src/main.tsx`：加载旧版 WebView 垫片，按构建变体挂载标准版或 `src/tv/`（Android TV 版），并在使用协议确认后装配应用 Provider 和自动选线。
 - `src/app/`：`App.tsx` 负责页面栈、桌面/移动布局和全局交互；`shell/` 放窗口控件，
   `startup/` 放启动门。
 - `src/features/`：按 `account/category/discover/feed/playback/posts/search/settings` 归组页面、
   专属组件与 hooks。Feed 的详情/评论/选集面板、设置页的线路/代理控件都随功能放置。
+- `src/tv/`：独立 Android TV 版页面、焦点导航、本地片库与播放界面。
 - `src/shared/`：`api`（IPC 与响应类型）、`model`（应用/账号/内容偏好状态）、`network`（自动选线）、
   `storage`（存储键与协议版本）、`diagnostics`、`lib`、`ui`（跨功能控件）。
 - `src/shared/model/store.tsx` 仍聚合导航、账号与播放偏好；这次目录迁移没有拆 Provider。

@@ -21,8 +21,12 @@ function fail(message) {
 if (config.identifier !== "com.hghubx.tv" || config.productName !== "HGhubX TV") {
   fail("Android TV 配置的产品名或包名发生变化，请同步 TV 资源与 Activity");
 }
+if (!existsSync(android)) {
+  console.log("[tv] skip patch: src-tauri/gen/android does not exist yet");
+  process.exit(0);
+}
 for (const path of [manifestPath, activityPath, gradlePath]) {
-  if (!existsSync(path)) fail(`缺少 ${path}；请在 TV 分支重新运行 tauri android init`);
+  if (!existsSync(path)) fail(`缺少 ${path}；请先使用 tauri.tv.conf.json 运行 tauri android init`);
 }
 const gradle = readFileSync(gradlePath, "utf8");
 if (!/\bapplicationId\s*=\s*"com\.hghubx\.tv"/.test(gradle) ||

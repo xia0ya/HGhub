@@ -275,11 +275,11 @@ impl SessionStore {
             if cur.token.is_empty() || cur.origin.is_empty() {
                 return false;
             }
-            if cur.origin == new_origin {
-                return true;
-            }
             if !trusted(&cur.origin) || !trusted(new_origin) {
                 return false;
+            }
+            if cur.origin == new_origin {
+                return true;
             }
             cur.origin = new_origin.to_string();
             cur.revision = cur.revision.wrapping_add(1);
@@ -306,10 +306,13 @@ impl SessionStore {
     /// already bound to an unverified current origin only gets the original
     /// publisher refresh, never a move.
     pub async fn reconcile_on_boot(&self, origin: &str) {
+        let rev = self.revision();
         let stored = self.stored_origin();
         if self.token(origin).is_none() && stored.as_deref().is_some_and(|old| old != origin) {
             let _ = crate::lines::verify_published_origin(origin).await;
-            let _ = self.rebase_if_trusted(origin, rebase_trust);
+            if crate::net::base() == origin && self.revision() == rev {
+                let _ = self.rebase_if_trusted(origin, rebase_trust);
+            }
         } else if self.token(origin).is_some() && !crate::net::trusted_auth_origin(origin) {
             let _ = crate::lines::verify_published_origin(origin).await;
         }
@@ -395,7 +398,20 @@ impl SessionStore {
         let snapshot = self.current.lock().unwrap();
         if let Some(path) = self.file.lock().unwrap().as_ref() {
             if let Ok(text) = serde_json::to_string_pretty(&*snapshot) {
-                let _ = std::fs::write(path, text);
+                let temp = path.with_extension("json.tmp");
+                let mut options = std::fs::OpenOptions::new();
+                options.write(true).create(true).truncate(true);
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::OpenOptionsExt;
+                    options.mode(0o600);
+                }
+                if let Ok(mut file) = options.open(&temp) {
+                    use std::io::Write;
+                    if file.write_all(text.as_bytes()).is_ok() && file.sync_all().is_ok() {
+                        let _ = std::fs::rename(&temp, path);
+                    }
+                }
             }
         }
     }

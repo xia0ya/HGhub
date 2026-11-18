@@ -16,20 +16,24 @@ ad-hoc 签名都不应进入仓库或本机脚本输出。
   `beforeBuildCommand`、`bundle`、`bundle.android.versionCode`；
   [`tauri.macos.conf.json`](../../src-tauri/tauri.macos.conf.json)、
   [`tauri.linux.conf.json`](../../src-tauri/tauri.linux.conf.json)、
-  [`tauri.ios.conf.json`](../../src-tauri/tauri.ios.conf.json)。
+  [`tauri.ios.conf.json`](../../src-tauri/tauri.ios.conf.json)、
+  [`tauri.tv.conf.json`](../../src-tauri/tauri.tv.conf.json)。
 - Rust 版本：[`src-tauri/Cargo.toml`](../../src-tauri/Cargo.toml) 的 `[package].version`、
   `custom-protocol` feature；[`src-tauri/Cargo.lock`](../../src-tauri/Cargo.lock) 的 `hghubx` 包。
 - CI：[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) 的 `frontend`、`rust`、`smoke`
   job；[`playback.yml`](../../.github/workflows/playback.yml)；
   [`build-ios.yml`](../../.github/workflows/build-ios.yml)；
-  [`release.yml`](../../.github/workflows/release.yml) 的 `windows`、`android`、`macos`、`ios`、
-  `linux`、`check`、`release` job。
+  [`android-build.yml`](../../.github/workflows/android-build.yml)；
+  [`release.yml`](../../.github/workflows/release.yml) 的 `windows`、`android`、`android-tv`、
+  `macos`、`ios`、`linux`、`check`、`release` job。
 - 版本/预算门禁：[`scripts/set-version.mjs`](../../scripts/set-version.mjs)、
   [`scripts/check-version-sync.mjs`](../../scripts/check-version-sync.mjs)、
   [`scripts/check-doc-links.mjs`](../../scripts/check-doc-links.mjs)、
   [`scripts/check-size-budgets.mjs`](../../scripts/check-size-budgets.mjs)、
   [`tools/size-budgets.json`](../../tools/size-budgets.json)。
-- iOS 打包：[`scripts/build-ios-unsigned.sh`](../../scripts/build-ios-unsigned.sh)；图标/启动屏：
+- iOS/TV 打包：[`scripts/build-ios-unsigned.sh`](../../scripts/build-ios-unsigned.sh)、
+  [`scripts/build-android-tv.mjs`](../../scripts/build-android-tv.mjs)、
+  [`scripts/patch-android-tv.mjs`](../../scripts/patch-android-tv.mjs)；图标/启动屏：
   `generate-ios-icons.mjs`、`sync-ios-icons.mjs`、`patch-ios-splash.mjs`、
   `sync-android-icons.mjs`、`patch-android-splash.mjs`。
 - 本地入口：[`Makefile`](../../Makefile) 的 `check`、`test-rust`、`test-web`、`test-smoke`、
@@ -46,11 +50,14 @@ ad-hoc 签名都不应进入仓库或本机脚本输出。
    追加 `src/styles/legacy-webview.css` 并用 lightningcss 压缩。Tailwind 插件以
    `optimize:false` 运行，避免其内置优化先吃掉需要降级的语法。TV 构建脚本
    `build-android-tv.mjs` 复用同一 `pnpm build`，自动获得同一条兼容链。
-2. Tauri 构建的 `beforeBuildCommand` 在 Vite 构建后跑图标生成/同步和 Android/iOS 启动屏补丁，
-   再打包 `dist`。桌面入口为 `pnpm tauri build`；开发为 `pnpm tauri dev`。
-3. `make check` 等价于 `test-rust` + `test-web` + `docs` + `budget`：
+2. Tauri 构建的 `beforeBuildCommand` 在 Vite 构建后跑图标生成/同步和 Android 启动屏补丁
+   （iOS 启动屏补丁由 `scripts/build-ios-unsigned.sh` 执行），再打包 `dist`。桌面入口为
+   `pnpm tauri build`；开发为 `pnpm tauri dev`。
+3. `make check` 等价于 `test-rust` + `test-web` + `docs` + `budget` + `release-check`：
+   `cargo check --manifest-path src-tauri/Cargo.toml --all-targets`、
    `cargo test --manifest-path src-tauri/Cargo.toml --lib`、`pnpm build`、
-   `node scripts/check-doc-links.mjs`、`node scripts/check-size-budgets.mjs`。它**不包含**
+   `node scripts/check-doc-links.mjs`、`node scripts/check-size-budgets.mjs`、
+   `node scripts/check-version-sync.mjs`。它**不包含**
    `pnpm test:smoke`；smoke 由 CI 的独立 job 和 `make test-smoke` 执行。
 4. CI `frontend`：Node 22、pnpm 10、`pnpm install --frozen-lockfile`、版本字段检查、文档链接、
    `pnpm build`、尺寸预算。
@@ -66,8 +73,9 @@ ad-hoc 签名都不应进入仓库或本机脚本输出。
    `versionCode = major*1_000_000 + minor*1_000 + patch`，minor/patch 超过 999 会报错。
 7. 平台产物：
    - Windows：NSIS 安装包 + `HGhubX_<version>_x64_portable.zip`。
-   - Android：`pnpm tauri android build --apk --split-per-abi`，按 ABI 产出并用 secrets 中的
-     keystore `apksigner` 签名，文件名 `HGhubX_<version>_<abi>.apk`；随后 `aapt2 dump badging`
+   - Android 标准版与 TV 版：复用 `android-build.yml` 执行 `pnpm tauri android build --apk --split-per-abi`，
+     按 ABI 产出并用 secrets 中的 keystore `apksigner` 签名，文件名分别为
+     `HGhubX_<version>_<abi>.apk` 与 `HGhubX-TV_<version>_<abi>.apk`；随后 `aapt2 dump badging`
      打印实际 versionCode。
    - macOS：`quick` 只编 arm64；正式发布编 universal，产物 `HGhubX_<version>_universal.dmg`
      （quick 为 `_arm64.dmg`），ad-hoc 签名。
@@ -75,19 +83,17 @@ ad-hoc 签名都不应进入仓库或本机脚本输出。
      `scripts/build-ios-unsigned.sh <version>`；Xcode `CODE_SIGNING_ALLOWED=NO`，产出
      `HGhubX_<version>_ios.ipa`。
    - Linux：`pnpm tauri build` 产出 deb，文件名 `HGhubX_<version>_amd64.deb`。
-8. `release` job 依赖五个平台 job，以 `always()` 等待它们结束；发布条件是 `v*` tag ref，
-   或手动触发且 `tag` 非空，条件中没有限制 `platforms=all` 或 `quick=false`。
-   它下载已有 artifact，用 `softprops/action-gh-release` 上传 `artifacts/*`；
-   如果存在 `docs/release-notes/<tag>.md` 就作为正文，否则自动生成说明。`fail_on_unmatched_files`
-   为 true，没有匹配产物时失败，但不保证五个平台的产物全部存在。
+8. `release` job 依赖六个平台 job，在 `!cancelled()` 且 `windows`、`android`、`android-tv`、`macos`、`linux`
+   全部成功（`ios` 允许成功或失败）时执行；发布条件是 `v*` tag ref，或手动触发且 `tag` 非空、
+   `platforms=all`、`quick=false`。它下载已有 artifact，用 `softprops/action-gh-release` 上传 `artifacts/*`；
+   如果存在 `docs/release-notes/<tag>.md` 就作为正文，否则开启 `generate_release_notes` 自动生成说明。
 9. `check` job 只做编译/类型检查/单测，不产包；手动 `platforms=check` 是最快的“能不能编”验证。
 
 ## 状态转换
 
 - 版本：源版本（tag 或 `tauri.conf.json`）→ `set-version.mjs` 校验 `major.minor.patch` →
-  写四份文件 → 平台构建。`check-version-sync.mjs` 由常规 CI 的 `frontend` job 调用，
-  不在当前 release workflow 中；它要求四处版本字符串一致，并检查 Android `versionCode`
-  为正整数，没有校验该值与版本号公式是否一致。
+  写四份文件 → 平台构建。`check-version-sync.mjs` 由常规 CI 的 `frontend` job 和 `release.yml` 的
+  `check` job 调用；它要求四处版本字符串一致，并检查 Android `versionCode` 与公式推导值一致。
 - Android versionCode：版本号解析 → `major*1e6 + minor*1e3 + patch` → 写入
   `bundle.android.versionCode` → APK 签名 → `aapt2` 复核。
 - iOS：`ios init` 生成工程 → 补 plist → 启动 Tauri options server → Xcode release 构建 →

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../shared/api/api";
 import type { Post, VideoCard } from "../../shared/api/types";
+import { useStore } from "../../shared/model/store";
 
 type SearchKind = "video" | "post";
 type Result = {
@@ -14,6 +15,7 @@ const CACHE_ITEMS = 200;
 
 /** Keep query identity together with its cards so pending searches never relabel old content. */
 export function useSearchResults(scope?: "original") {
+  const { lineEpoch, accountScope } = useStore();
   const [result, setResult] = useState<Result | null>(null);
   const [request, setRequest] = useState<Request | null>(null);
   const [loading, setLoading] = useState(false);
@@ -24,6 +26,8 @@ export function useSearchResults(scope?: "original") {
   const sequence = useRef(0);
   const cache = useRef(new Map<string, { result: Result; at: number }>());
   useEffect(() => () => { sequence.current++; }, []);
+  const envKey = `${accountScope}:${lineEpoch}`;
+  const prevEnvRef = useRef(envKey);
 
   const publish = (value: Result | null) => { current.current = value; setResult(value); };
   const run = async (next: Request, reuse = false) => {
@@ -33,7 +37,7 @@ export function useSearchResults(scope?: "original") {
     attempt.current = next;
     setRequest(next);
     setError(null);
-    const key = JSON.stringify([scope, next.kind, next.keyword]);
+    const key = JSON.stringify([envKey, scope, next.kind, next.keyword]);
     const cached = cache.current.get(key);
     if (reuse && cached && Date.now() - cached.at < CACHE_TTL) {
       publish(cached.result);
@@ -87,5 +91,13 @@ export function useSearchResults(scope?: "original") {
     busy.current = false; attempt.current = null;
     publish(null); setRequest(null); setLoading(false); setError(null);
   };
+  useEffect(() => {
+    if (prevEnvRef.current === envKey) return;
+    prevEnvRef.current = envKey;
+    sequence.current++;
+    busy.current = false;
+    if (attempt.current) void run({ ...attempt.current, page: 1 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [envKey]);
   return { result, request, loading, error, search, loadMore, retry, clear };
 }

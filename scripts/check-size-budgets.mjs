@@ -111,7 +111,10 @@ for (const [rel, entry] of Object.entries(config)) {
 }
 
 if (update && !failed) {
-  for (const [rel, count] of Object.entries(measured)) config[rel] = count;
+  for (const [rel, count] of Object.entries(measured)) {
+    const existing = config[rel];
+    config[rel] = typeof existing === "object" && existing !== null ? { ...existing, budget: count } : count;
+  }
   fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
   console.log(`budget: wrote ${path.relative(root, configPath)}`);
 }

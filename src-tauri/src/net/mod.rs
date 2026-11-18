@@ -74,12 +74,12 @@ static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
 pub use client::{get, refresh_client, UA};
 pub(crate) use client::{request_scope, RequestScope};
 pub use diagnostics::{diagnose, proxy_state, test_proxy};
-pub use edge::{edge, fetch_bytes};
+pub use edge::{edge, fetch_bytes, fetch_bytes_with_url};
 pub use line::{
     base, bind_base, is_custom_line, normalize_base, set_base, set_custom_base,
     trusted_auth_origin,
 };
-pub use redact::{err_text, heal_client, is_proxy_error, redact_proxy};
+pub use redact::{err_text, heal_client, is_proxy_error, redact_error_proxy_auth, redact_proxy};
 
 #[cfg(test)]
 use client::{cached_client, client_key, media_config_fingerprint, update_media_generation, ProxyRoute};
@@ -89,8 +89,6 @@ use diagnostics::{dns_summary, healthy_proxy_response, probe_proxy_origin, verdi
 use edge::{edge_operation, edge_redirect_target, with_retry};
 #[cfg(test)]
 use line::{persisted_base, persisted_line, save_line};
-#[cfg(test)]
-use redact::redact_error_proxy_auth;
 
 #[cfg(test)]
 mod tests;

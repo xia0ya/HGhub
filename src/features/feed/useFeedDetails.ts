@@ -30,6 +30,13 @@ export function useFeedDetails({
   detailsRef.current = details;
   const [posts, setPosts] = useState<Record<number, Post>>({});
   const detailRequests = useRef(new Map<string, Promise<Detail>>());
+  const prevScopeRef = useRef(accountScope);
+  if (prevScopeRef.current !== accountScope) {
+    prevScopeRef.current = accountScope;
+    detailsRef.current = {};
+    setDetails({});
+    setPosts({});
+  }
 
   const requestDetail = useCallback((id: number) => {
     const key = `${accountScope}:${lineEpoch}:${id}`;

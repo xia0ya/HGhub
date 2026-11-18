@@ -141,7 +141,8 @@
           }
         }, true);
         window.addEventListener("unhandledrejection", function (event) {
-          if (!ready) fail(errorKind(event.reason, ""), "", 0, 0);
+          var msg = event.reason && event.reason.message ? String(event.reason.message) : "";
+          if (!ready) fail(errorKind(event.reason, msg), "", 0, 0);
         });
         document.addEventListener("DOMContentLoaded", show);
         timer = setTimeout(function () {

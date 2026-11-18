@@ -54,7 +54,7 @@ export function EpisodesPanel({ episodes, current, onPick, onClose, bare = false
 export function CommentsPanel({ videoId, ep, total, kind = "video", onClose }: {
   videoId: number; ep: number; total: number; kind?: "video" | "post"; onClose: () => void;
 }) {
-  const { user, setLoginOpen, toast } = useStore();
+  const { user, setLoginOpen, toast, accountScope, lineEpoch } = useStore();
   const [items, setItems] = useState<Comment[]>([]);
   const [page, setPage] = useState(0);
   const [pages, setPages] = useState(1);
@@ -70,7 +70,7 @@ export function CommentsPanel({ videoId, ep, total, kind = "video", onClose }: {
   const loadBusy = useRef(false);
   const sendBusy = useRef(false);
   const sendSequence = useRef(0);
-  const scope = `${kind}:${videoId}:${ep}`;
+  const scope = `${accountScope}:${lineEpoch}:${kind}:${videoId}:${ep}`;
   const currentScope = useRef(scope);
   currentScope.current = scope;
   const alive = useRef(true);

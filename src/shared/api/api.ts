@@ -173,8 +173,8 @@ export const api = {
 
   clearCache: () => invoke<{ webCache: boolean; platform: string }>("cache_clear"),
   netDiag: () => invoke<Record<string, unknown>>("net_diag"),
-  postLike: (id: number, on: boolean, identity?: AccountIdentity) => invoke<unknown>("api_post_like", { id, on, expectedUserId: identity?.expectedUserId, expectedOrigin: identity?.expectedOrigin }),
-  postCollect: (id: number, on: boolean, identity?: AccountIdentity) => invoke<unknown>("api_post_collect", { id, on, expectedUserId: identity?.expectedUserId, expectedOrigin: identity?.expectedOrigin }),
+  postLike: (id: number, on: boolean, identity?: AccountIdentity) => call<unknown>("api_post_like", { id, on, expectedUserId: identity?.expectedUserId, expectedOrigin: identity?.expectedOrigin }),
+  postCollect: (id: number, on: boolean, identity?: AccountIdentity) => call<unknown>("api_post_collect", { id, on, expectedUserId: identity?.expectedUserId, expectedOrigin: identity?.expectedOrigin }),
   postComments: (id: number, page: number, size: number) => call<CommentPage>("api_post_comments", { id, page, size }),
   postCategories: () => call<{ items: PostCategory[] }>("api_post_categories"),
   postCategory: (route: string, page = 1, size = 20, sort?: string) =>
@@ -300,10 +300,8 @@ export async function selfTest(): Promise<string> {
       const m = keyLine.match(/URI="([^"]+)"/);
       if (m) {
         const rustUrl = m[1];
-        steps.push(`rustUrl:${rustUrl.slice(0, 60)}`);
-        // A/B：用 JS 重新编码同一条上游地址
+        // A/B：用 JS 重新编码同一条上游地址（不在日志中输出原始 key URL）
         const inner = decodeURIComponent(rustUrl.split("?u=")[1] || "");
-        steps.push(`inner:${inner.slice(0, 50)}`);
         try {
           const rk = await fetch(rustUrl);
           const bk = await rk.arrayBuffer();

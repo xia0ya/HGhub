@@ -34,6 +34,9 @@ on:
       ANDROID_KEY_PASSWORD:
         required: true
 
+permissions:
+  contents: read
+
 env:
   CI: "true"
 
@@ -51,12 +54,13 @@ jobs:
       - name: 版本号对齐 tag
         id: ver
         shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             V="${GITHUB_REF_NAME#v}"
-          elif [[ -n "${{ inputs.tag }}" ]]; then
-            V="${{ inputs.tag }}"
-            V="${V#v}"
+          elif [[ -n "$INPUT_TAG" ]]; then
+            V="${INPUT_TAG#v}"
           else
             V="$(node -p "require('./src-tauri/tauri.conf.json').version")"
           fi

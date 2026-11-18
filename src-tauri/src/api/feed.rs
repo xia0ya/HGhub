@@ -221,7 +221,7 @@ pub async fn api_following(
     size: u32,
 ) -> Result<Value, String> {
     state
-        .authed("GET", &format!("/api/videos/following?page={page}&size={size}"), None)
+        .account_request("GET", &format!("/api/videos/following?page={page}&size={size}"), None, None, None)
         .await
 }
 

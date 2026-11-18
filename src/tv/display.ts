@@ -2,13 +2,27 @@ import { useSyncExternalStore } from "react";
 import { isTv } from "../edition";
 
 export type TvDisplay = { horizontal: number; top: number; bottom: number };
-const KEY = "hghubx.tv.display.v1";
+const KEY = "hghubx_tv_display_v1";
+const LEGACY_KEY = "hghubx.tv.display.v1";
 const defaults: TvDisplay = { horizontal: 3, top: 3, bottom: 3 };
 const clamp = (value: unknown, fallback: number) => typeof value === "number" && Number.isFinite(value)
   ? Math.min(12, Math.max(0, Math.round(value))) : fallback;
 function read(): TvDisplay {
   try {
-    const value = JSON.parse(localStorage.getItem(KEY) || "null");
+    let raw = localStorage.getItem(KEY);
+    if (raw === null) {
+      const legacy = localStorage.getItem(LEGACY_KEY);
+      if (legacy !== null) {
+        raw = legacy;
+        try {
+          localStorage.setItem(KEY, legacy);
+          if (localStorage.getItem(KEY) === legacy) localStorage.removeItem(LEGACY_KEY);
+        } catch { /* retain legacy on write failure */ }
+      }
+    } else {
+      try { localStorage.removeItem(LEGACY_KEY); } catch { /* ignore */ }
+    }
+    const value = JSON.parse(raw || "null");
     return { horizontal: clamp(value?.horizontal, 3), top: clamp(value?.top, 3), bottom: clamp(value?.bottom, 3) };
   } catch { return { ...defaults }; }
 }

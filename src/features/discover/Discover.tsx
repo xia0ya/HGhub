@@ -15,7 +15,9 @@ const TopicIcon = IGrid;
 const TagIcon = IGlobe;
 
 /** Retain the last good result on refresh, but never expose a previous route's data. */
-function useDiscoveryData<T>(key: string, request: () => Promise<T>) {
+function useDiscoveryData<T>(baseKey: string, request: () => Promise<T>) {
+  const { lineEpoch } = useStore();
+  const key = `${lineEpoch}:${baseKey}`;
   const [state, setState] = useState<{ key: string; data: T | null; loading: boolean; error: string }>({ key, data: null, loading: true, error: "" });
   const sequence = useRef(0);
   const busy = useRef(false);
@@ -106,7 +108,7 @@ export function TopicsPage({ onBack, wide }: { onBack: () => void; wide: boolean
 
 /* ================= 专题详情页 ================= */
 export function TopicPage({ slug, name, onBack, wide }: { slug: string; name: string; onBack: () => void; wide: boolean }) {
-  const { push } = useStore();
+  const { push, lineEpoch } = useStore();
   const [searching, setSearching] = useState(false);
   const [introExpanded, setIntroExpanded] = useState(false);
   const introId = useId();
@@ -164,7 +166,7 @@ export function TopicPage({ slug, name, onBack, wide }: { slug: string; name: st
     } finally {
       if (token === sequence.current) busy.current = false;
     }
-  }, [slug]);
+  }, [slug, lineEpoch]);
 
   const loadMore = () => {
     const current = stateRef.current;
@@ -299,7 +301,7 @@ export function TagsPage({ onBack, wide }: { onBack: () => void; wide: boolean }
 
 /* ================= 标签视频页 ================= */
 export function TagPage({ tag, name, onBack, wide }: { tag: string; name: string; onBack: () => void; wide: boolean }) {
-  const { push } = useStore();
+  const { push, lineEpoch } = useStore();
   const { preferences, storageError, isTagBlocked, blockTags, unblockTag } = useContentPreferences();
   const filtering = !preferences.paused && (preferences.blockedTags.length > 0 || preferences.hideUntagged);
   const tagBlocked = isTagBlocked(name);
@@ -377,7 +379,7 @@ export function TagPage({ tag, name, onBack, wide }: { tag: string; name: string
     void load("video", 1, true);
     void load("post", 1, true);
     return () => { sequence.current.video++; sequence.current.post++; busy.current.video = false; busy.current.post = false; };
-  }, [load, tag]);
+  }, [load, tag, lineEpoch]);
   useEffect(() => {
     const el = videoSentinel.current;
     if (!el || filtering || videoErr || videoLoading || videoPage >= videoPages) return;

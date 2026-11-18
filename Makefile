@@ -2,9 +2,10 @@
 
 # The verification of record is GitHub Actions. These targets are the same
 # commands CI runs, so a local run (when requested) and CI cannot drift.
-check: test-rust test-web docs budget
+check: test-rust test-web docs budget release-check
 
 test-rust:
+	cargo check --manifest-path src-tauri/Cargo.toml --all-targets
 	cargo test --manifest-path src-tauri/Cargo.toml --lib
 
 test-web:

@@ -186,7 +186,7 @@ const originalSort = (cate: (typeof ORIGINAL_CATES)[number]["value"]) =>
   cate === "all" ? "new" : "latest";
 
 export function ChannelPage({ cate, name, onBack, wide }: { cate: string; name: string; onBack: () => void; wide: boolean }) {
-  const { push } = useStore();
+  const { push, lineEpoch } = useStore();
   const { preferences } = useContentPreferences();
   const filtering = !preferences.paused && (preferences.blockedTags.length > 0 || preferences.hideUntagged);
   const [searching, setSearching] = useState(false);
@@ -261,7 +261,7 @@ export function ChannelPage({ cate, name, onBack, wide }: { cate: string; name: 
     void loadMore(true, "latest", "all");
     return () => { requestSeq.current++; busy.current = false; };
     /* eslint-disable-next-line */
-  }, [cate]);
+  }, [cate, lineEpoch]);
   const filterPending = displayedFilter !== filterKey(serverSort, originalCate);
   const replacing = refreshing || filterPending;
   useEffect(() => {

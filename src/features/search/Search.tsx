@@ -50,10 +50,15 @@ export default function Search({ active, wide }: { active: boolean; wide: boolea
       setHotLoading(false);
     }
   };
+  const hotEpoch = useRef(lineEpoch);
   useEffect(() => {
-    // 切换主导航时短暂复用榜单；手动刷新始终重新获取官网内容。
+    if (hotEpoch.current !== lineEpoch) {
+      hotEpoch.current = lineEpoch;
+      hotLoadedAt.current = 0;
+    }
+    // 切换主导航时短暂复用榜单；手动刷新或切线路后重新获取官网内容。
     if (active && Date.now() - hotLoadedAt.current > 60_000) void refreshHot();
-  }, [active]);
+  }, [active, lineEpoch]);
 
   const changeTab = (next: "video" | "post") => {
     if (next === tab) return;
@@ -193,7 +198,7 @@ const RANK_TABS = [
 ] as const;
 
 export function RankPage({ onBack, wide }: { onBack: () => void; wide: boolean }) {
-  const { push } = useStore();
+  const { push, lineEpoch } = useStore();
   type RankKind = typeof RANK_TABS[number]["k"];
   type RankState = { items: RankItem[]; loadedAt: number; loading: boolean; error: string };
   const [tab, setTab] = useState<RankKind>("hot");
@@ -201,8 +206,10 @@ export function RankPage({ onBack, wide }: { onBack: () => void; wide: boolean }
   const cache = useRef<Partial<Record<RankKind, RankState>>>({});
   const pending = useRef(new Set<RankKind>());
   const alive = useRef(true);
+  const epochRef = useRef(lineEpoch);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const load = async (kind: RankKind) => {
+    const reqEpoch = lineEpoch;
     if (pending.current.has(kind)) return;
     pending.current.add(kind);
     const previous = cache.current[kind];
@@ -213,15 +220,23 @@ export function RankPage({ onBack, wide }: { onBack: () => void; wide: boolean }
     update({ items: previous?.items ?? [], loadedAt: previous?.loadedAt ?? 0, loading: true, error: "" });
     try {
       const res = await api.rank(kind);
+      if (reqEpoch !== epochRef.current) return;
       update({ items: res?.items || [], loadedAt: Date.now(), loading: false, error: "" });
     } catch (error) {
+      if (reqEpoch !== epochRef.current) return;
       update({ items: previous?.items ?? [], loadedAt: previous?.loadedAt ?? 0, loading: false,
         error: error instanceof Error ? error.message : "榜单加载失败，请重试" });
     } finally { pending.current.delete(kind); }
   };
   useEffect(() => {
+    if (epochRef.current !== lineEpoch) {
+      epochRef.current = lineEpoch;
+      cache.current = {};
+      pending.current.clear();
+    }
     if (!cache.current[tab]?.loadedAt || Date.now() - cache.current[tab]!.loadedAt > 60_000) void load(tab);
-  }, [tab]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, lineEpoch]);
   const state = states[tab];
   const items = state?.items ?? [];
   const loading = state?.loading ?? true;

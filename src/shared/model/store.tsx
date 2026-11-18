@@ -104,7 +104,10 @@ function loadPersist(): Persist {
   try {
     const raw = readStorage(LS);
     const swipeMigration = readStorage(STORAGE_KEYS.swipeEp);
-    if (!raw) return DEFAULTS;
+    if (!raw) {
+      try { localStorage.setItem(STORAGE_KEYS.swipeEp, "1"); } catch { /* ignore */ }
+      return DEFAULTS;
+    }
     const p = { ...DEFAULTS, ...(JSON.parse(raw) as Partial<Persist>) };
     // 只在启动时应用；本次使用中取消静音不会关闭此偏好。
     const muteOnStartup = p.muteOnStartup !== false;

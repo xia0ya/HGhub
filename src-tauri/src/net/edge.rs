@@ -244,8 +244,12 @@ pub async fn edge(
     }
 }
 
-/// 拉原始字节（图片 / m3u8 / 分片）。
+/// 拉原始字节（图片 / m3u8 / 分片），保留重定向后的最终 URL。
 pub async fn fetch_bytes(url: &str) -> Result<(Option<String>, Vec<u8>), String> {
+    fetch_bytes_with_url(url).await.map(|(_, ctype, bytes)| (ctype, bytes))
+}
+
+pub async fn fetch_bytes_with_url(url: &str) -> Result<(String, Option<String>, Vec<u8>), String> {
     let request = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
     let resource = crate::playback_log::resource_id(url);
     let mut attempt = 0;
@@ -277,13 +281,14 @@ pub async fn fetch_bytes(url: &str) -> Result<(Option<String>, Vec<u8>), String>
                 if !resp.status().is_success() {
                     return Err(format!("HTTP {}", resp.status()));
                 }
+                let final_url = resp.url().to_string();
                 let ctype = resp
                     .headers()
                     .get(reqwest::header::CONTENT_TYPE)
                     .and_then(|v| v.to_str().ok())
                     .map(|s| s.to_string());
                 let bytes = resp.bytes().await.map_err(|e| err_text(&e))?.to_vec();
-                Ok((ctype, bytes))
+                Ok((final_url, ctype, bytes))
             }.await;
             if using_public_dns {
                 if let Ok(mut routes) = MEDIA_DNS_ROUTES.lock() {
@@ -295,12 +300,12 @@ pub async fn fetch_bytes(url: &str) -> Result<(Option<String>, Vec<u8>), String>
                 }
             }
             if let Err(error) = &result {
-                if target.as_ref().is_some_and(|target| crate::media_dns::eligible(target, error)) {
+                if target.as_ref().is_some_and(|target| !super::client::proxy_active(target) && crate::media_dns::eligible(target, error)) {
                     public_dns.store(!using_public_dns, Ordering::Relaxed);
                     crate::playback_log::record("network.dns_fallback", json!({"resource": resource, "attempt": attempt, "public_dns": !using_public_dns, "error_kind": crate::playback_log::error_kind(error)}));
                 }
             }
-            crate::playback_log::record("network.end", json!({"request": request, "resource": resource, "attempt": attempt, "public_dns": using_public_dns, "status": status, "headers_ms": headers_ms, "elapsed_ms": started.elapsed().as_millis() as u64, "bytes": result.as_ref().ok().map(|(_, bytes)| bytes.len()), "error_kind": result.as_ref().err().map(|e: &String| crate::playback_log::error_kind(e))}));
+            crate::playback_log::record("network.end", json!({"request": request, "resource": resource, "attempt": attempt, "public_dns": using_public_dns, "status": status, "headers_ms": headers_ms, "elapsed_ms": started.elapsed().as_millis() as u64, "bytes": result.as_ref().ok().map(|(_, _, bytes)| bytes.len()), "error_kind": result.as_ref().err().map(|e: &String| crate::playback_log::error_kind(e))}));
             result
         }
     })

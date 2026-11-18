@@ -1,13 +1,19 @@
-// Run the focused current-code regression checks in GitHub Actions.
+// Run the focused current-code regression checks.
 import { spawn } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const output = join(root, "test-results", "round-review");
-if (process.env.GITHUB_ACTIONS !== "true") throw new Error("Run this review only in GitHub Actions.");
+let browserExecutable = process.env.BROWSER_EXECUTABLE;
+if (!browserExecutable) {
+  for (const candidate of ["/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"]) {
+    if (await access(candidate).then(() => true, () => false)) { browserExecutable = candidate; break; }
+  }
+}
+if (!browserExecutable) browserExecutable = chromium.executablePath();
 const scripts = [
   "test-inplace-search-back.mjs",
   "test-account-sync-empty-state.mjs",
@@ -19,7 +25,7 @@ async function run(command, cwd) {
   const result = await new Promise((resolve) => {
     const child = spawn(command[0], command.slice(1), {
       cwd,
-      env: { ...process.env, BROWSER_EXECUTABLE: process.env.BROWSER_EXECUTABLE || chromium.executablePath() },
+      env: { ...process.env, ...(browserExecutable ? { BROWSER_EXECUTABLE: browserExecutable } : {}) },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";

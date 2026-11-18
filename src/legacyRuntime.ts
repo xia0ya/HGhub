@@ -66,6 +66,17 @@ if (!window.queueMicrotask) {
   };
 }
 
+if (typeof HTMLElement !== "undefined" && !("inert" in HTMLElement.prototype)) {
+  Object.defineProperty(HTMLElement.prototype, "inert", {
+    configurable: true,
+    get(this: HTMLElement) { return this.hasAttribute("inert"); },
+    set(this: HTMLElement, value: boolean) {
+      if (value) this.setAttribute("inert", "");
+      else this.removeAttribute("inert");
+    },
+  });
+}
+
 // Chromium < 84 exposes addListener/removeListener instead of EventTarget.
 const mediaQueryPrototype = Object.getPrototypeOf(window.matchMedia("all"));
 if (!mediaQueryPrototype.addEventListener && mediaQueryPrototype.addListener) {

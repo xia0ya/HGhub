@@ -3,7 +3,7 @@ import { addPluginListener, invoke } from "@tauri-apps/api/core";
 import { platform } from "../api/api";
 import { acceptUsageAgreement, USAGE_AGREEMENT_VERSION } from "../storage/usageAgreement";
 import "../../styles/usage-agreement.css";
-import type { RegisterStartupBack } from "../../app/startup/LaunchAnimation";
+import type { RegisterStartupBack } from "../lib/back";
 
 /** Shared verbatim text for first-run signing and read-only review in Settings. */
 export function UsageAgreementText() {

@@ -1,5 +1,6 @@
 /** 全局返回拦截：面板等临时层优先消费，未消费则走导航栈。 */
 type Handler = () => boolean;
+export type RegisterStartupBack = (handler: () => void) => () => void;
 
 let handler: Handler | null = null;
 const overlays: { handle: Handler }[] = [];

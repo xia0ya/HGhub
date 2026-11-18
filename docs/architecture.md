@@ -7,7 +7,10 @@
 
 ```text
 src/
-├── main.tsx                  React 挂载与启动初始化
+├── editionEntry.ts           启动入口，加载旧 WebView 垫片并按构建变体装配应用
+├── edition.ts                标准版 / Android TV 变体标识
+├── legacyRuntime.ts          旧版 Chromium / Safari 运行时 API 兼容垫片
+├── main.tsx                  标准版 React 挂载与启动初始化
 ├── app/
 │   ├── App.tsx              页面栈、布局、全局返回与键盘处理
 │   ├── shell/               桌面标题栏、侧栏、窗口缩放热区
@@ -21,6 +24,7 @@ src/
 │   ├── posts/               图文列表、正文页与热度数据处理
 │   ├── search/              搜索、排行榜、标签与列表内搜索
 │   └── settings/            设置页、线路、代理与内容偏好编辑
+├── tv/                      独立 Android TV 版页面、遥控器焦点与本地索引
 ├── shared/
 │   ├── api/                 Tauri IPC、响应类型、平台与媒体地址封装
 │   ├── model/               应用状态、账号同步、内容偏好

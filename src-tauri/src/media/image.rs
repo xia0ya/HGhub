@@ -75,18 +75,17 @@ fn image_kind(buf: &[u8]) -> Option<&'static str> {
 
 /// 取封面：命中缓存直接返回；同地址的进行中请求共享下载和解密结果。
 pub async fn load_image(url: &str) -> ImageResult {
-    let generation = {
-        let cache = IMG_CACHE.lock().unwrap();
-        if let Some(hit) = cache.get(url).cloned() {
-            let kind = image_kind(&hit).unwrap_or("image/jpeg");
-            return Ok((kind.to_string(), hit));
-        }
-        IMG_GENERATION.load(Ordering::Acquire)
-    };
+    let req_scope = crate::net::request_scope();
+    let generation = IMG_GENERATION.load(Ordering::Acquire);
+    let cache_key = format!("{}:{}:{generation}:{url}", u8::from(req_scope.strict), req_scope.generation);
+    if let Some(hit) = IMG_CACHE.lock().unwrap().get(&cache_key).cloned() {
+        let kind = image_kind(&hit).unwrap_or("image/jpeg");
+        return Ok((kind.to_string(), hit));
+    }
     let loading = {
         let mut requests = IMG_LOADING.lock().unwrap();
         requests.retain(|_, request| request.strong_count() > 0);
-        let key = (generation, url.to_string());
+        let key = (generation, cache_key.clone());
         if let Some(request) = requests.get(&key).and_then(Weak::upgrade) {
             request
         } else {
@@ -95,12 +94,12 @@ pub async fn load_image(url: &str) -> ImageResult {
             request
         }
     };
-    loading.get_or_init(|| download_image(url, generation)).await.clone()
+    loading.get_or_init(|| download_image(url, &cache_key, req_scope, generation)).await.clone()
 }
 
-async fn download_image(url: &str, generation: u64) -> ImageResult {
+async fn download_image(url: &str, cache_key: &str, req_scope: crate::net::RequestScope, generation: u64) -> ImageResult {
     // 缓存检查与领取任务之间，另一请求可能已完成。
-    if let Some(hit) = IMG_CACHE.lock().unwrap().get(url).cloned() {
+    if let Some(hit) = IMG_CACHE.lock().unwrap().get(cache_key).cloned() {
         let kind = image_kind(&hit).unwrap_or("image/jpeg");
         return Ok((kind.to_string(), hit));
     }
@@ -111,17 +110,15 @@ async fn download_image(url: &str, generation: u64) -> ImageResult {
         let dec = aes_cbc_decrypt(&bytes).ok_or_else(|| "封面解密失败".to_string())?;
         strip_padding(dec)
     };
-    let kind = image_kind(&plain).unwrap_or("image/jpeg").to_string();
+    let kind = image_kind(&plain).ok_or_else(|| "封面格式无效".to_string())?.to_string();
     let arc = Arc::new(plain);
     let mut cache = IMG_CACHE.lock().unwrap();
-    // 清缓存后，旧下载可完成当前显示，但不再把结果写回新一代缓存。
-    if IMG_GENERATION.load(Ordering::Acquire) == generation {
+    // 清缓存或切换配置代次后，旧下载可完成当前显示，但不再把结果写回新一代缓存。
+    if IMG_GENERATION.load(Ordering::Acquire) == generation && crate::net::request_scope() == req_scope {
         if cache.len() >= IMG_CACHE_MAX {
-            if let Some(key) = cache.keys().next().cloned() {
-                cache.remove(&key);
-            }
+            if let Some(key) = cache.keys().next().cloned() { cache.remove(&key); }
         }
-        cache.insert(url.to_string(), arc.clone());
+        cache.insert(cache_key.to_string(), arc.clone());
     }
     Ok((kind, arc))
 }

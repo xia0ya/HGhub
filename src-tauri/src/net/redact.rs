@@ -66,16 +66,17 @@ pub fn err_text(e: &reqwest::Error) -> String {
     redact_error_proxy_auth(&out)
 }
 
-/// Transport source chains are not guaranteed to redact proxy userinfo. Remove
-/// userinfo from embedded URLs while keeping hosts and useful failure details.
-pub(super) fn redact_error_proxy_auth(message: &str) -> String {
+/// Transport source chains are not guaranteed to redact proxy userinfo or signed
+/// query parameters. Remove userinfo and query strings from embedded URLs while
+/// keeping hosts, paths and useful failure details.
+pub fn redact_error_proxy_auth(message: &str) -> String {
     let mut output = String::with_capacity(message.len());
     let mut rest = message;
     while let Some(separator) = rest.find("://") {
         let authority_start = separator + 3;
         output.push_str(&rest[..authority_start]);
         rest = &rest[authority_start..];
-        let authority_end = rest.find(|ch: char| ch.is_whitespace() || matches!(ch, '/' | '?' | '#' | '\'' | '"' | '<' | '>'))
+        let authority_end = rest.find(|ch: char| ch.is_whitespace() || matches!(ch, '/' | '?' | '#' | '\'' | '"' | '<' | '>' | ')' | ';'))
             .unwrap_or(rest.len());
         let authority = &rest[..authority_end];
         if let Some(at) = authority.rfind('@') {
@@ -85,6 +86,10 @@ pub(super) fn redact_error_proxy_auth(message: &str) -> String {
             output.push_str(authority);
         }
         rest = &rest[authority_end..];
+        let url_end = rest.find(|ch: char| ch.is_whitespace() || matches!(ch, '\'' | '"' | '<' | '>' | ')' | ';')).unwrap_or(rest.len());
+        let tail = &rest[..url_end];
+        output.push_str(tail.split(['?', '#']).next().unwrap_or(tail));
+        rest = &rest[url_end..];
     }
     output.push_str(rest);
     output

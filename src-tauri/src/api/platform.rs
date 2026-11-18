@@ -117,6 +117,10 @@ fn request_ios_orientation(landscape: bool) {
                     }
                 }
             }
+            if !prefs.is_null() {
+                let sel_release = sel_registerName(b"release\0".as_ptr() as *const c_char);
+                msg1_void(prefs, sel_release);
+            }
         }
 
         // Fallback: UIDevice setValue:forKey:@"orientation" + attemptRotationToDeviceOrientation

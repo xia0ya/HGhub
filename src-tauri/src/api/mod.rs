@@ -11,12 +11,19 @@ pub(crate) mod platform;
 pub(crate) mod update;
 pub(crate) mod video;
 
+#[allow(unused_imports)]
 pub use account::*;
+#[allow(unused_imports)]
 pub use feed::*;
+#[allow(unused_imports)]
 pub use interact::*;
+#[allow(unused_imports)]
 pub use lines::*;
+#[allow(unused_imports)]
 pub use platform::*;
+#[allow(unused_imports)]
 pub use update::*;
+#[allow(unused_imports)]
 pub use video::*;
 
 use crate::net::{base, edge};
@@ -49,15 +56,6 @@ impl Api {
             !crate::network_policy::strict_security() || crate::net::trusted_auth_origin(&origin)
         });
         edge(&origin, "GET", path, None, token.as_deref()).await
-    }
-
-    async fn authed(&self, method: &str, path: &str, body: Option<Value>) -> Result<Value, String> {
-        let origin = base();
-        let token = self
-            .session
-            .token(&origin)
-            .ok_or_else(|| "请先登录".to_string())?;
-        edge(&origin, method, path, body, Some(&token)).await
     }
 
     fn account_session(&self, expected_user_id: Option<i64>, expected_origin: Option<&str>) -> Result<Session, String> {

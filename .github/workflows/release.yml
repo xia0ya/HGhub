@@ -30,6 +30,9 @@ concurrency:
   group: release-${{ github.ref }}-${{ github.event_name }}-${{ github.run_id }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
   CI: "true"
 
@@ -49,12 +52,13 @@ jobs:
       - name: 版本号对齐 tag
         id: ver
         shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             V="${GITHUB_REF_NAME#v}"
-          elif [[ -n "${{ inputs.tag }}" ]]; then
-            V="${{ inputs.tag }}"
-            V="${V#v}"
+          elif [[ -n "$INPUT_TAG" ]]; then
+            V="${INPUT_TAG#v}"
           else
             V="$(node -p "require('./src-tauri/tauri.conf.json').version")"
           fi
@@ -113,7 +117,7 @@ jobs:
     with:
       edition: standard
       platforms: ${{ inputs.platforms }}
-      quick: ${{ inputs.quick }}
+      quick: ${{ inputs.quick == true }}
       tag: ${{ inputs.tag }}
     secrets: inherit
 
@@ -124,7 +128,7 @@ jobs:
     with:
       edition: tv
       platforms: ${{ inputs.platforms }}
-      quick: ${{ inputs.quick }}
+      quick: ${{ inputs.quick == true }}
       tag: ${{ inputs.tag }}
     secrets: inherit
 
@@ -143,12 +147,13 @@ jobs:
       - name: 版本号对齐 tag
         id: ver
         shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             V="${GITHUB_REF_NAME#v}"
-          elif [[ -n "${{ inputs.tag }}" ]]; then
-            V="${{ inputs.tag }}"
-            V="${V#v}"
+          elif [[ -n "$INPUT_TAG" ]]; then
+            V="${INPUT_TAG#v}"
           else
             V="$(node -p "require('./src-tauri/tauri.conf.json').version")"
           fi
@@ -221,12 +226,13 @@ jobs:
       - name: 版本号对齐 tag
         id: ver
         shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             V="${GITHUB_REF_NAME#v}"
-          elif [[ -n "${{ inputs.tag }}" ]]; then
-            V="${{ inputs.tag }}"
-            V="${V#v}"
+          elif [[ -n "$INPUT_TAG" ]]; then
+            V="${INPUT_TAG#v}"
           else
             V="$(node -p "require('./src-tauri/tauri.conf.json').version")"
           fi
@@ -296,12 +302,13 @@ jobs:
       - name: 版本号对齐 tag
         id: ver
         shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             V="${GITHUB_REF_NAME#v}"
-          elif [[ -n "${{ inputs.tag }}" ]]; then
-            V="${{ inputs.tag }}"
-            V="${V#v}"
+          elif [[ -n "$INPUT_TAG" ]]; then
+            V="${INPUT_TAG#v}"
           else
             V="$(node -p "require('./src-tauri/tauri.conf.json').version")"
           fi
@@ -358,16 +365,11 @@ jobs:
   # ================= 只查编译：不出包，最快拿到「过 / 不过」 =================
   check:
     name: 编译检查（tsc + cargo check + 单测）
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.platforms == 'check' }}
     steps:
       - uses: actions/checkout@v7
-
-      - name: 版本号对齐
-        run: |
-          V="$(node -p "require('./src-tauri/tauri.conf.json').version")"
-          node scripts/set-version.mjs "$V"
 
       - name: 安装系统依赖
         run: |
@@ -393,8 +395,17 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: 前端类型检查
-        run: npx tsc --noEmit -p tsconfig.json
+      - name: 版本字段检查
+        run: node scripts/check-version-sync.mjs
+
+      - name: 文档链接检查
+        run: node scripts/check-doc-links.mjs
+
+      - name: 前端构建与类型检查
+        run: pnpm build
+
+      - name: 尺寸预算检查
+        run: node scripts/check-size-budgets.mjs
 
       - name: cargo check（含测试目标）
         working-directory: src-tauri
@@ -408,17 +419,24 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: [windows, android, android-tv, macos, linux, ios]
-    # always()：iOS 失败时不能把整包卡住，但成功时要等它的 ipa 一起发
+    # iOS 失败时不能把整包卡住，但成功时要等它的 ipa 一起发；其余五大平台必须全部成功且工作流未被取消
     if: >-
       always() &&
+      !cancelled() &&
+      needs.windows.result == 'success' &&
+      needs.android.result == 'success' &&
+      needs.android-tv.result == 'success' &&
+      needs.macos.result == 'success' &&
+      needs.linux.result == 'success' &&
+      (needs.ios.result == 'success' || needs.ios.result == 'failure') &&
       (startsWith(github.ref, 'refs/tags/v') ||
-      (github.event_name == 'workflow_dispatch' && inputs.tag != ''))
+      (github.event_name == 'workflow_dispatch' && inputs.tag != '' && inputs.platforms == 'all' && !inputs.quick))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
@@ -432,8 +450,10 @@ jobs:
 
       - name: 取版本说明
         id: notes
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          TAG="${{ inputs.tag != '' && inputs.tag || github.ref_name }}"
+          TAG="${INPUT_TAG:-$GITHUB_REF_NAME}"
           F="docs/release-notes/${TAG}.md"
           if [ -f "$F" ]; then
             echo "body_path=$F" >> "$GITHUB_OUTPUT"
@@ -448,6 +468,6 @@ jobs:
           name: ${{ inputs.tag != '' && inputs.tag || github.ref_name }}
           body_path: ${{ steps.notes.outputs.body_path }}
           files: artifacts/*
-          generate_release_notes: true
-          prerelease: ${{ inputs.prerelease }}
+          generate_release_notes: ${{ steps.notes.outputs.body_path == '' }}
+          prerelease: ${{ inputs.prerelease || contains(inputs.tag != '' && inputs.tag || github.ref_name, '-') }}
           fail_on_unmatched_files: true

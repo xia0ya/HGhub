@@ -9,14 +9,20 @@
 //!
 //! 端口固定，前端 `src/shared/api/api.ts` 的 `LOCAL` 必须与 [`ORIGIN`] 一致。
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 /// 监听端口。前端硬编码同一个值，两边必须同时改。
 pub const PORT: u16 = 17650;
 
 /// 前端与 m3u8 分片改写共用的 origin。
 pub const ORIGIN: &str = "http://127.0.0.1:17650";
+
+const MAX_CONNECTIONS: usize = 24;
+const MAX_HEADERS: usize = 64;
+const MAX_LINE_BYTES: u64 = 8 * 1024;
 
 /// 在后台线程里起服务。绑定失败时记日志并退出，本地媒体服务不可用，播放会失败。
 pub fn start() {
@@ -29,14 +35,39 @@ pub fn start() {
             }
         };
         eprintln!("[hg] 媒体代理就绪：{ORIGIN}");
+        let active = Arc::new(AtomicUsize::new(0));
         for stream in listener.incoming().flatten() {
+            if !stream.peer_addr().is_ok_and(|peer| peer.ip().is_loopback()) {
+                continue;
+            }
+            if active.fetch_add(1, Ordering::AcqRel) >= MAX_CONNECTIONS {
+                active.fetch_sub(1, Ordering::AcqRel);
+                continue;
+            }
+            let active = active.clone();
             std::thread::spawn(move || {
+                struct Guard(Arc<AtomicUsize>);
+                impl Drop for Guard {
+                    fn drop(&mut self) {
+                        self.0.fetch_sub(1, Ordering::AcqRel);
+                    }
+                }
+                let _guard = Guard(active);
                 if let Err(err) = serve(stream) {
                     eprintln!("[hg] 媒体请求失败：{err}");
                 }
             });
         }
     });
+}
+
+fn read_bounded_line(reader: &mut BufReader<TcpStream>, buf: &mut String) -> std::io::Result<usize> {
+    buf.clear();
+    let n = reader.take(MAX_LINE_BYTES).read_line(buf)?;
+    if n as u64 == MAX_LINE_BYTES && !buf.ends_with('\n') {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "header line too long"));
+    }
+    Ok(n)
 }
 
 fn serve(mut stream: TcpStream) -> std::io::Result<()> {
@@ -46,25 +77,40 @@ fn serve(mut stream: TcpStream) -> std::io::Result<()> {
 
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut request_line = String::new();
-    if reader.read_line(&mut request_line)? == 0 {
+    if read_bounded_line(&mut reader, &mut request_line)? == 0 {
         return Ok(());
     }
     let mut range = None;
     let mut range_count = 0;
     let mut if_range = false;
+    let mut host_ok = false;
+    let mut origin_ok = true;
+    let mut header_count = 0;
     loop {
         let mut line = String::new();
-        if reader.read_line(&mut line)? == 0 || line.trim_end().is_empty() {
+        if read_bounded_line(&mut reader, &mut line)? == 0 || line.trim_end().is_empty() {
             break;
         }
+        header_count += 1;
+        if header_count > MAX_HEADERS {
+            return write_plain(&mut stream, 431, "request header fields too large");
+        }
         if let Some((name, value)) = line.split_once(':') {
-            if name.eq_ignore_ascii_case("Range") {
+            let value = value.trim();
+            if name.eq_ignore_ascii_case("Host") {
+                host_ok = matches!(value, "127.0.0.1:17650" | "localhost:17650");
+            } else if name.eq_ignore_ascii_case("Origin") {
+                origin_ok = value.is_empty() || value == "null" || crate::allowed_frontend_origin(value);
+            } else if name.eq_ignore_ascii_case("Range") {
                 range_count += 1;
-                range = Some(value.trim().to_owned());
+                range = Some(value.to_owned());
             } else if name.eq_ignore_ascii_case("If-Range") {
                 if_range = true;
             }
         }
+    }
+    if !host_ok || !origin_ok {
+        return write_plain(&mut stream, 403, "forbidden");
     }
 
     let mut request = request_line.split_whitespace();

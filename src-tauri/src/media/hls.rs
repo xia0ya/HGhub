@@ -1,6 +1,6 @@
 //! HLS playlist fetch and rewrite.
 
-use crate::net::fetch_bytes;
+use crate::net::fetch_bytes_with_url;
 use once_cell::sync::Lazy;
 use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC};
 use std::collections::HashMap;
@@ -53,26 +53,17 @@ fn hls_attributes(line: &str) -> Option<(&str, Vec<&str>)> {
 }
 
 fn map_uri_attributes(line: &str, mut rewrite: impl FnMut(&str) -> String) -> String {
-    let Some((tag, attributes)) = hls_attributes(line) else {
-        return line.to_string();
-    };
-    let mapped: Vec<String> = attributes
-        .into_iter()
-        .map(|attribute| {
-            if let Some((key, value)) = attribute.split_once('=') {
-                if key.trim() == "URI" {
-                    if let Some(uri) = value
-                        .trim()
-                        .strip_prefix('"')
-                        .and_then(|v| v.strip_suffix('"'))
-                    {
-                        return format!("{key}=\"{}\"", rewrite(uri));
-                    }
+    let Some((tag, attributes)) = hls_attributes(line) else { return line.to_string(); };
+    let mapped: Vec<String> = attributes.into_iter().map(|attribute| {
+        if let Some((key, value)) = attribute.split_once('=') {
+            if key.trim().to_ascii_uppercase().ends_with("URI") {
+                if let Some(uri) = value.trim().strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
+                    return format!("{}=\"{}\"", key.trim(), rewrite(uri));
                 }
             }
-            attribute.to_string()
-        })
-        .collect();
+        }
+        attribute.to_string()
+    }).collect();
     format!("{tag}:{}", mapped.join(","))
 }
 
@@ -82,26 +73,23 @@ fn rewrite_uri_attr(line: &str, prefix: &str) -> String {
 
 /// 取 m3u8 并把 key / 分片地址改写到本地协议。
 pub async fn load_playlist(url: &str, prefix: &str) -> Result<Arc<String>, String> {
-    // 缓存 key 要带 prefix：同一份 m3u8 在不同 scheme 下改写结果不一样
-    let cache_key = format!("{prefix}|{url}");
+    // 缓存 key 要带请求作用域与 prefix：同一份 m3u8 在不同 scheme 或配置代次下不混用
+    let req_scope = crate::net::request_scope();
     let generation = PL_CACHE_GENERATION.load(Ordering::Acquire);
-    if let Some(hit) = PL_CACHE.lock().unwrap().get(&cache_key).cloned() {
-        return Ok(hit);
-    }
-    let (_, bytes) = fetch_bytes(url).await?;
+    let cache_key = format!("{}:{}:{generation}:{prefix}|{url}", u8::from(req_scope.strict), req_scope.generation);
+    if let Some(hit) = PL_CACHE.lock().unwrap().get(&cache_key).cloned() { return Ok(hit); }
+    let (final_url, _, bytes) = fetch_bytes_with_url(url).await?;
     let text = std::str::from_utf8(&bytes).map_err(|_| "播放列表不是 UTF-8 文本")?;
     if !text.trim_start_matches('\u{feff}').starts_with("#EXTM3U") {
         return Err("响应不是 HLS 播放列表".into());
     }
-    let arc = Arc::new(rewrite_playlist(url, text, prefix));
+    let arc = Arc::new(rewrite_playlist(&final_url, text, prefix));
     let mut cache = PL_CACHE.lock().unwrap();
     // clear_caches advances the epoch first; never let an older in-flight
     // playlist repopulate the cache after that clear.
-    if PL_CACHE_GENERATION.load(Ordering::Acquire) == generation {
+    if PL_CACHE_GENERATION.load(Ordering::Acquire) == generation && crate::net::request_scope() == req_scope {
         if cache.len() >= PL_CACHE_MAX {
-            if let Some(key) = cache.keys().next().cloned() {
-                cache.remove(&key);
-            }
+            if let Some(key) = cache.keys().next().cloned() { cache.remove(&key); }
         }
         cache.insert(cache_key, arc.clone());
     }
@@ -139,7 +127,7 @@ pub(super) fn rewrite_playlist(url: &str, text: &str, prefix: &str) -> String {
                 }
                 continue;
             }
-            if line.contains("URI=\"") {
+            if line.to_ascii_uppercase().contains("URI") && line.contains('"') {
                 // KEY/MAP/MEDIA/SESSION-KEY/PART/PRELOAD-HINT 等 URI 都必须经过目标检查。
                 let absolute = absolutize_uri_in_attr(url, line);
                 out.push_str(&rewrite_uri_attr(&absolute, prefix));

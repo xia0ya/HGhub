@@ -53,11 +53,13 @@ export default function Player({
   const [controlsLocked, setControlsLocked] = useState(false);
   const seek = useSeekInput({ time, duration, enabled: active && !controlsLocked, resetKey: src,
     onInteraction: (phase, input, target, pointerTarget) => trace(`seek.input.${phase}`, { input, target, pointer_target: pointerTarget }),
-    onSeek: (target, input) => {
+    onSeek: (rawTarget, input) => {
       const video = videoRef.current;
       if (!video || !activity.isActive()) return;
+      const dur = video.duration && Number.isFinite(video.duration) ? video.duration : 0;
+      const target = dur > 0 ? Math.max(0, Math.min(dur - 0.15, rawTarget)) : Math.max(0, rawTarget);
       requestSeek(target, `legacy_${input}`);
-      setWaiting(true);
+      if (Math.abs(video.currentTime - target) > 0.01) setWaiting(true);
       if (hlsRef.current) {
         try { hlsRef.current.startLoad(target); } catch { /* ignore */ }
       }

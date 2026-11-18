@@ -218,7 +218,7 @@ fn valid_dns_name(value: &str) -> bool {
     value.len() <= 253
         && value.contains('.')
         && value.split('.').all(valid_dns_label)
-        && !["localhost", "local", "internal", "home.arpa"]
+        && !["localhost", "local", "internal", "home.arpa", "huangguoai.ai"]
             .iter()
             .any(|suffix| value == *suffix || value.ends_with(&format!(".{suffix}")))
         && url::Url::parse(&format!("https://{value}"))

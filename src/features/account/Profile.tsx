@@ -12,8 +12,8 @@ import { IChevR, IClock, IHeart, ILogout, ISettings, IStar, IUser, IUserF } from
 
 /* Account changes discard cached details synchronously, before another account can paint. */
 export default function Profile({ wide }: { wide: boolean }) {
-  const { accountScope } = useStore();
-  return <ProfileContent key={accountScope} wide={wide} />;
+  const { accountScope, lineEpoch } = useStore();
+  return <ProfileContent key={`${accountScope}:${lineEpoch}`} wide={wide} />;
 }
 
 function ProfileContent({ wide }: { wide: boolean }) {

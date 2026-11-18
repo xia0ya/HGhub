@@ -40,10 +40,14 @@
 
 | 运行期键 | 旧键 | 内容 |
 | --- | --- | --- |
-| `hghubx_app_v1` | `hghub_app_v1` | 游客偏好、收藏、关注、观看记录、搜索历史、音量、`swipeEp`、`preferHevc` |
+| `hghubx_app_v1` | `hghub_app_v1` | 游客偏好、收藏、关注、观看记录、搜索历史、音量、`muteOnStartup`、`swipeEp`、`preferHevc`、`fsIdleSecs` |
 | `hghubx_swipe_ep_v2` | `hghub_swipe_ep_v2` | 上下划切集的一次性迁移标记 |
 | `hghubx_theme` | `hghub_theme` | `light`/`dark`/`system` |
 | `hghubx_auto_line` | `hg.autoLine` | 自动选线开关 |
+| `hghubx_usage_agreement` | — | 使用协议版本与签署时间 |
+| `hghubx_mobile_hold_guide_v1` | — | 移动端首次长按倍速教程已读标记 |
+| `hghubx_tv_display_v1` | `hghubx.tv.display.v1` | TV 端缩放、过扫描与减少动效设置 |
+| `hghubx_tv_playback_v1` | `hghubx-tv-playback-v1` | TV 端连播、倍速与编码偏好 |
 | `CONTENT_PREFERENCES_KEY` | — | 屏蔽标签、暂停过滤、隐藏无标签内容 |
 | `ACCOUNT_KEY` | — | 按 `[origin, user.id]` 分桶的账号本地副本 |
 

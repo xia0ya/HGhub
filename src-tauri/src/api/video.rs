@@ -103,5 +103,5 @@ pub async fn api_comment_send(
         }
         _ => format!("/api/videos/{id}/comments?ep={ep}"),
     };
-    state.authed("POST", &path, Some(body)).await
+    state.account_request("POST", &path, Some(body), None, None).await
 }

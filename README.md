@@ -37,7 +37,7 @@ Windows / macOS / Linux / Android / iOS · iOS 圆角与玻璃材质 · 沉浸�
 
 ## 仿冒提醒
 
-> 🚫 **已发现的恶意修改版**：[`hichuv 仓库`](https://github.com/hichuv 仓库)
+> 🚫 **已发现的恶意修改版**：[`hichuv` 仓库](https://github.com/hichuv)
 >
 > 该仓库与本项目无关，是在旧版本源码基础上擅自加入**卡密验证、VIP 付费解锁**等变现功能的修改版，
 > 代码改动不透明、安全性无法验证。**请勿下载、勿注册、勿付费**；如已安装，建议立即卸载，改用官方 Release 包安装。
@@ -69,6 +69,7 @@ Windows / macOS / Linux / Android / iOS · iOS 圆角与玻璃材质 · 沉浸�
 | --- | --- |
 | `src/app/` | 应用装配、页面栈、窗口壳与启动门 |
 | `src/features/` | 首页与 Feed、播放、账号、分类、发现、图文、搜索、设置 |
+| `src/tv/` | 独立 Android TV 版界面、遥控器焦点与本地搜索片库 |
 | `src/shared/` | IPC、共享状态、存储、自动选线、诊断与跨功能 UI |
 | `src/styles/`、`src/index.css` | 统一样式入口与样式文件 |
 | `src-tauri/src/` | Rust 的 API、网络、媒体、线路与平台实现 |

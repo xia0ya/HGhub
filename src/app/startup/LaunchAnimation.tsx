@@ -4,12 +4,12 @@ import { platform } from "../../shared/api/api";
 import "../../styles/launch.css";
 import UsageAgreement from "../../shared/ui/UsageAgreement";
 import { hasAcceptedAgreement } from "../../shared/storage/usageAgreement";
-import { holdBackForStartup } from "../../shared/lib/back";
+import { holdBackForStartup, type RegisterStartupBack } from "../../shared/lib/back";
 
 // One reveal per WebView lifetime, including StrictMode and subsequent App remounts.
 let launchCompleted = false;
 export const LAUNCH_DURATION = 2200;
-export type RegisterStartupBack = (handler: () => void) => () => void;
+export type { RegisterStartupBack };
 
 /** Exact hghubx.svg geometry, split into independent spring-animated strokes. */
 export function LaunchAnimation({ onFinish, registerBack }: { onFinish: () => void; registerBack?: RegisterStartupBack }) {

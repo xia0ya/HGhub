@@ -210,7 +210,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const pendingActions = useRef(new Set<string>());
-  const playKey = `${curId}:${curEp}`;
+  const playKey = `${accountScope}:${curId}:${curEp}`;
   const playGuard = useRef({ allowed, id: curId, permissionKey, playKey });
   playGuard.current = { allowed, id: curId, permissionKey, playKey };
   const isCurrentPlayback = () => playGuard.current.allowed && playGuard.current.id === curId
@@ -232,7 +232,11 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
       if (!playUrl) setProxyRetry(value => value + 1);
     };
     window.addEventListener("hg:proxy-changed", retry);
-    return () => window.removeEventListener("hg:proxy-changed", retry);
+    window.addEventListener("hg:line-changed", retry);
+    return () => {
+      window.removeEventListener("hg:proxy-changed", retry);
+      window.removeEventListener("hg:line-changed", retry);
+    };
   }, [playUrl]);
   useEffect(() => { setZoom({ s: 1, x: 0, y: 0, g: false }); pinchRef.current = null; pointersRef.current.clear(); }, [playUrl]);
   useEffect(() => { videoRef.current?.trace("page.active", { active, view: mode, video_id: curId, episode: curEp }); }, [active, mode, curId, curEp]);
@@ -259,7 +263,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
     setDuration(d);
     liveRef.current = { id: curId, ep: curEp, dur: d, t: historyWriter.current === addHistory && liveRef.current.id === curId && liveRef.current.ep === curEp && liveRef.current.accountScope === accountScope ? liveRef.current.t : 0, permissionKey, accountScope };
     const r = resumeRef.current;
-    if (r && r.key === playKey && r.t > 1 && (!d || r.t < d - 3)) {
+    if (r && r.key === `${curId}:${curEp}` && r.t > 1 && (!d || r.t < d - 3)) {
       resumeRef.current = null;
       videoRef.current?.seek(r.t, "history_resume");
       playbackClock.publish(r.t);
@@ -481,7 +485,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
     const ep = epMap[curId] || 1;
     const nextEpisode = ep + 1;
     if (nextEpisode > episodes.length) return;
-    const key = `${curId}:${nextEpisode}`;
+    const key = `${accountScope}:${curId}:${nextEpisode}`;
     if (playUrls[key]) return;
     requestPlay(curId, nextEpisode)
       .then((info) => {
@@ -503,7 +507,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
     let alive = true;
     const currentId = curId;
     const currentPermission = permissionKey;
-    const nextKey = `${nextId}:1`;
+    const nextKey = `${accountScope}:${nextId}:1`;
     if (playUrls[nextKey]) return;
     const stillRelevant = () => alive && mounted.current && playGuard.current.id === currentId
       && playGuard.current.permissionKey === currentPermission && idsRef.current[index + 1] === nextId;
@@ -530,7 +534,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
       }
     })();
     return () => { alive = false; };
-  }, [active, curId, index, nextVideoId, kind, mode, allowed, playingKey, playKey, playUrls[`${nextVideoId}:1`], permissionKey, accountScope, store.lineEpoch, filtering, blockReason, onBlocked, requestDetail, requestPlay]);
+  }, [active, curId, index, nextVideoId, kind, mode, allowed, playingKey, playKey, playUrls[`${accountScope}:${nextVideoId}:1`], permissionKey, accountScope, store.lineEpoch, filtering, blockReason, onBlocked, requestDetail, requestPlay]);
 
   /* 切换条目/集数时重置播放状态 */
   useEffect(() => {
@@ -551,7 +555,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
     const s = liveRef.current;
     if (kind === "video" && s.id && s.dur && playGuard.current.allowed && playGuard.current.id === s.id
       && actionContext.current.accountScope === s.accountScope
-      && playGuard.current.playKey === `${s.id}:${s.ep}` && playGuard.current.permissionKey === s.permissionKey) historyWriter.current(s.id, s.ep, s.t, s.dur);
+      && playGuard.current.permissionKey === s.permissionKey) historyWriter.current(s.id, s.ep, s.t, s.dur);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -636,6 +640,10 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
         y0: zoom.y,
       };
       if (gesture.current?.timer) window.clearTimeout(gesture.current.timer);
+      if (gesture.current?.mode === "scrub") {
+        setScrub(null); scrubTarget.current = null;
+        if (gesture.current.playing && active) videoRef.current?.play();
+      }
       gesture.current = null;
       if (holdRef.current) { holdRef.current = false; setHoldSpeed(0); setHoldSlow(false); }
       lockArmedRef.current = false;
@@ -829,14 +837,16 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
     lockArmedRef.current = false;
   }, [playKey]);
 
-  /* 进出全屏：iOS 会在这时把播放打断，过渡期多补几次 play() */
+  /* 进出全屏：iOS 会在这时把播放打断，过渡期多补几次 play()（用户主动暂停时不恢复） */
+  const pausedRef = useRef(paused); pausedRef.current = paused;
   const keepAlive = useCallback(() => {
     for (const t of keepAliveTimers.current) window.clearTimeout(t);
     keepAliveTimers.current = [];
+    if (pausedRef.current) return;
     for (const delay of [50, 150, 300, 500, 800, 1200]) {
       keepAliveTimers.current.push(window.setTimeout(() => {
         const v = videoRef.current?.el();
-        if (v && v.paused) videoRef.current?.play();
+        if (!pausedRef.current && v && v.paused) videoRef.current?.play();
       }, delay) as unknown as number);
     }
   }, []);
@@ -967,6 +977,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
   };
   const onBarDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.stopPropagation();
+    barRef.current = e.currentTarget;
     videoRef.current?.trace("seek.input.down", { input: "mobile_bar" });
     barScrub.current = true;
     try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* ignore */ }
@@ -978,11 +989,11 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
     videoRef.current?.trace("seek.input.move", { input: "mobile_bar" });
     barSeekTo(e.clientX, e.clientY);
   };
-  const onBarUp = (e: React.PointerEvent<HTMLDivElement>) => {
+  const onBarUp = (e: React.PointerEvent<HTMLDivElement>, cancelled = false) => {
     if (!barScrub.current) return;
     barScrub.current = false;
     e.stopPropagation();
-    const pct = barPctAt(e.clientX, e.clientY);
+    const pct = !cancelled ? barPctAt(e.clientX, e.clientY) : null;
     if (pct != null && duration) {
       const target = pct * duration;
       videoRef.current?.trace("seek.input.up", { input: "mobile_bar", target });
@@ -1332,7 +1343,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
 
                     <Button onClick={() => void onFav()} disabled={collectPending} aria-busy={collectPending} aria-label="收藏" className="flex flex-col items-center gap-1 pressable" aria-pressed={collected}>
                       {collected ? <IStarF size={27} className="hg-gold" /> : <IStar size={27} className="hg-ink hg-ov-shadow" />}
-                      <span className="text-[12px] text-white/90 tabular-nums">{fmt(meta.collect)}</span>
+                      <span className="text-[12px] text-white/90 tabular-nums">{fmt(collectCount)}</span>
                     </Button>
 
                     <Button onClick={() => setPanel("episodes")} aria-label="选集" className="flex flex-col items-center gap-1 pressable">
@@ -1398,8 +1409,8 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
                         详情 · 第 {curEp} 集<IChevR size={11} />
                       </Button>
                     </div>
-                    <div ref={barRef} className="mx-4 mt-2 relative" style={{ height: 14, touchAction: "none" }}
-                      onPointerDown={onBarDown} onPointerMove={onBarMove} onPointerUp={onBarUp} onPointerCancel={onBarUp}>
+                    {isActive && <div ref={barRef} className="mx-4 mt-2 relative" style={{ height: 14, touchAction: "none" }}
+                      onPointerDown={onBarDown} onPointerMove={onBarMove} onPointerUp={(e) => onBarUp(e, false)} onPointerCancel={(e) => onBarUp(e, true)}>
                       {/* 轨道：几乎看不见，只暗示可拖动 */}
                       <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-[2px] rounded-full" style={{ background: "rgba(255,255,255,.1)" }}>
                         <PlaybackProgress clock={playbackClock} duration={duration} preview={barPct} className="h-full rounded-full"
@@ -1417,7 +1428,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
                           {fmtTime(barPct * (duration || 0))}
                         </div>
                       )}
-                    </div>
+                    </div>}
                   </div>
                 </div>
               )}
@@ -1523,7 +1534,7 @@ export default function Feed({ videoIds, startIndex = 0, title = "", mode, kind 
             height: 22,
           }}>
           <div ref={barRef} className="relative h-full" style={{ touchAction: "none" }}
-            onPointerDown={onBarDown} onPointerMove={onBarMove} onPointerUp={onBarUp} onPointerCancel={onBarUp}>
+            onPointerDown={onBarDown} onPointerMove={onBarMove} onPointerUp={(e) => onBarUp(e, false)} onPointerCancel={(e) => onBarUp(e, true)}>
             <div className="absolute inset-x-0 bottom-[8px] h-[2.5px] rounded-full" style={{ background: "rgba(255,255,255,.3)" }}>
               <PlaybackProgress clock={playbackClock} duration={duration} preview={barPct} className="h-full rounded-full bg-white" />
             </div>

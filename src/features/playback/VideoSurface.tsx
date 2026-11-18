@@ -104,6 +104,7 @@ const VideoSurface = forwardRef<VideoHandle, Props>(function VideoSurface(
       // iOS 上直接赋到 duration 会卡在 ended 态，夹到结尾前 0.15s
       const dur = v.duration && Number.isFinite(v.duration) ? v.duration : 0;
       const target = dur > 0 ? Math.max(0, Math.min(dur - 0.15, t)) : Math.max(0, t);
+      if (dur > 0 && target <= dur - 0.3) nearEndFiredRef.current = false;
       requestSeek(target, source);
       if (hlsRef.current) { try { hlsRef.current.startLoad(target); } catch { /* ignore */ } }
       const resume = !v.paused;
@@ -254,9 +255,9 @@ const VideoSurface = forwardRef<VideoHandle, Props>(function VideoSurface(
         const v = e.target as HTMLVideoElement;
         reportSize(v);
         onTime?.(v.currentTime);
-        // iOS 有时不触发 ended：靠近片尾自己补一次，保证自动连播
+        // iOS 有时不触发 ended：靠近片尾自己补一次，保证自动连播（暂停态拖动不触发切集）
         const d = v.duration;
-        if (d && Number.isFinite(d) && v.currentTime > d - 0.3 && !nearEndFiredRef.current) {
+        if (!v.paused && activity.isActive() && d && Number.isFinite(d) && v.currentTime > d - 0.3 && !nearEndFiredRef.current) {
           nearEndFiredRef.current = true;
           onEnded?.();
         }

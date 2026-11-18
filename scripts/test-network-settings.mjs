@@ -1,6 +1,6 @@
 // Actual settings/components/store in Chromium; mocked Tauri IPC, no upstream requests.
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
@@ -16,7 +16,13 @@ try {
   vite = await createServer({ root, server: { host: "127.0.0.1", port: 0, strictPort: false } });
   await vite.listen();
   const origin = vite.resolvedUrls.local[0];
-  browser = await chromium.launch({ headless: true, executablePath: process.env.BROWSER_EXECUTABLE || "/usr/bin/google-chrome" });
+  let executablePath = process.env.BROWSER_EXECUTABLE;
+  if (!executablePath) {
+    for (const candidate of ["/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"]) {
+      if (await access(candidate).then(() => true, () => false)) { executablePath = candidate; break; }
+    }
+  }
+  browser = await chromium.launch({ headless: true, executablePath });
   async function open({ mobile = false, theme = "dark", width = 375, height = 812 } = {}) {
     const context = await browser.newContext({ viewport: mobile ? { width, height } : { width: 1280, height: 900 }, reducedMotion: "reduce",
       ...(mobile ? { userAgent: "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36" } : {}) });

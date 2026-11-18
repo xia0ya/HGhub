@@ -32,4 +32,15 @@ if (!Number.isInteger(versionCode) || versionCode < 1) {
   console.error("release-check: src-tauri/tauri.conf.json has no bundle.android.versionCode.");
   process.exit(1);
 }
+const parsed = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(pkg.version ?? "");
+if (!parsed) {
+  console.error(`release-check: invalid version format "${pkg.version}".`);
+  process.exit(1);
+}
+const [, major, minor, patch] = parsed.map(Number);
+const expectedCode = major * 1_000_000 + minor * 1_000 + patch;
+if (versionCode !== expectedCode) {
+  console.error(`release-check: bundle.android.versionCode=${versionCode} does not match expected ${expectedCode} for ${pkg.version}; run scripts/set-version.mjs.`);
+  process.exit(1);
+}
 console.log(`release-check: ok ${pkg.version}, android versionCode=${versionCode}`);

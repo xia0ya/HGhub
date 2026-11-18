@@ -115,11 +115,12 @@ pub async fn check_update() -> Result<Value, String> {
         })
         .filter(|(n, _)| asset_rank(n) > 0)
         .max_by_key(|(n, _)| asset_rank(n));
+    let cmp_target = if tag.contains("+hg.") { &tag } else { &latest };
     Ok(json!({
         "current": current,
         "latest": latest,
         "tag": tag,
-        "has_update": !latest.is_empty() && is_newer(&latest, &current),
+        "has_update": !latest.is_empty() && is_newer(cmp_target, &current),
         "asset": asset.map(|(name, url)| json!({ "name": name, "url": url })),
         "url": html,
         "name": v.get("name").and_then(|x| x.as_str()).unwrap_or(""),
@@ -136,20 +137,12 @@ pub async fn check_update() -> Result<Value, String> {
 fn asset_rank(name: &str) -> u8 {
     let n = name.to_ascii_lowercase();
     if cfg!(target_os = "android") {
-        if !n.ends_with(".apk") {
+        if !n.ends_with(".apk") || n.starts_with("hghubx-tv") {
             0
         } else if cfg!(target_arch = "aarch64") {
-            if n.contains("arm64") || n.contains("aarch64") {
-                3
-            } else {
-                1
-            }
+            if n.contains("arm64") || n.contains("aarch64") { 3 } else { 1 }
         } else if cfg!(target_arch = "x86_64") {
-            if n.contains("x86_64") {
-                3
-            } else {
-                1
-            }
+            if n.contains("x86_64") { 3 } else { 1 }
         } else if n.contains("x86") || n.contains("arm64") {
             1
         } else {
@@ -159,9 +152,11 @@ fn asset_rank(name: &str) -> u8 {
         if n.ends_with(".exe") { 3 } else { 0 }
     } else if cfg!(target_os = "macos") {
         if n.ends_with(".dmg") { 3 } else { 0 }
-    } else if n.ends_with(".deb") {
+    } else if cfg!(target_os = "ios") {
+        if n.ends_with(".ipa") { 3 } else { 0 }
+    } else if cfg!(target_os = "linux") && n.ends_with(".deb") {
         3
-    } else if n.ends_with(".appimage") {
+    } else if cfg!(target_os = "linux") && n.ends_with(".appimage") {
         2
     } else {
         0

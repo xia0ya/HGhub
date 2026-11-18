@@ -1,13 +1,11 @@
-use super::proxy_env::{
-    env_proxy_set, proxy_override, system_explicit_proxy, windows_proxy_enabled,
-};
+use super::proxy_env::{proxy_override, system_explicit_proxy};
 use super::redact::{err_text, redact_proxy};
 use super::{
     base, ClientCache, CLIENTS, CLIENT_GENERATION, CLIENT_TTL, MEDIA_CONFIG_FINGERPRINT,
     MEDIA_CONFIG_GENERATION, MEDIA_DNS_ROUTES,
 };
 use crate::network_policy;
-use serde_json::{json, Value};
+use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -193,18 +191,12 @@ pub(super) async fn client_for(raw: &str) -> Result<(url::Url, Arc<reqwest::Clie
     client_for_dns(raw, false).await
 }
 
-/// Keep Apple's existing per-target NO_PROXY/per-scheme/system matching.
-#[cfg(any(target_os = "macos", target_os = "ios"))]
+/// Keep per-target NO_PROXY/per-scheme/system matching consistent with reqwest.
 fn system_proxy_routes_target(target: &url::Url) -> bool {
     crate::apple_proxy::routes_target(
         &hyper_util::client::proxy::matcher::Matcher::from_system(),
         target.as_str(),
     )
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "ios")))]
-fn system_proxy_routes_target(_target: &url::Url) -> bool {
-    env_proxy_set() || windows_proxy_enabled()
 }
 
 pub(super) fn proxy_active(target: &url::Url) -> bool {

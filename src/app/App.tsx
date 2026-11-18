@@ -82,7 +82,7 @@ function StackPageContent({ page, onBack, wide, top, bottomInset, loginOpen }: {
   if (page.kind === "ranks") return <RankPage onBack={onBack} wide={wide} />;
   if (page.kind === "settings") return <SettingsPage onBack={onBack} wide={wide} initialSection={page.section} />;
   if (page.kind === "posts") return <PostsPage onBack={onBack} wide={wide} />;
-  if (page.kind === "post") return <PostDetail id={page.id} onBack={onBack} active={top} />;
+  if (page.kind === "post") return <PostDetail id={page.id} onBack={onBack} active={top && !loginOpen} />;
   if (page.kind === "topics") return <TopicsPage onBack={onBack} wide={wide} />;
   if (page.kind === "topic") return <TopicPage slug={page.slug} name={page.name} onBack={onBack} wide={wide} />;
   if (page.kind === "tags") return <TagsPage onBack={onBack} wide={wide} />;
@@ -133,7 +133,8 @@ function AppBody() {
         return;
       }
       if (loginOpen) { if (e.key === "Escape") setLoginOpen(false); return; }
-      if (e.key === "Escape") { if (fs) { setFs(false); return; } if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; } if (stack.length) pop(); return; }
+      if (e.key === "Escape") { if (runBack()) return; if (fs) { setFs(false); return; } if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; } if (stack.length) pop(); return; }
+      if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
       if (e.key === "/") { e.preventDefault(); setTab("search"); return; }
       if (["1", "2", "3", "4"].includes(e.key) && !e.repeat) {
         setTab((["home", "search", "category", "profile"] as Tab[])[Number(e.key) - 1]);
@@ -211,7 +212,8 @@ function ShellInner({ collapsed, theater }: { collapsed: boolean; theater: boole
         return;
       }
       if (loginOpen) { if (e.key === "Escape") setLoginOpen(false); return; }
-      if (e.key === "Escape") { if (fs) { setFs(false); return; } if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; } if (stack.length) pop(); return; }
+      if (e.key === "Escape") { if (runBack()) return; if (fs) { setFs(false); return; } if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; } if (stack.length) pop(); return; }
+      if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
       if (e.key === "/") { e.preventDefault(); setTab("search"); return; }
       if (["1", "2", "3", "4"].includes(e.key) && !e.repeat) {
         setTab((["home", "search", "category", "profile"] as Tab[])[Number(e.key) - 1]);

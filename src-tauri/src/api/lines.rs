@@ -54,7 +54,8 @@ pub async fn line_custom_set(state: State<'_, Api>, url: String) -> Result<Value
     crate::net::refresh_client();
     // Custom lines never join the trusted rebase: even a trusted old origin
     // must not hand its token to a user-specified site.
-    if previous != applied { state.session.clear(); }
+    let _ = previous;
+    state.session.clear();
     Ok(json!({ "base": applied, "custom": crate::net::is_custom_line() }))
 }
 

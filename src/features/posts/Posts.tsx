@@ -18,7 +18,7 @@ import { postHot } from "./postData";
 
 /* ================= 吃瓜列表 ================= */
 export function PostsPage({ onBack, wide }: { onBack: () => void; wide: boolean }) {
-  const { push } = useStore();
+  const { push, lineEpoch } = useStore();
   const { preferences } = useContentPreferences();
   const filtering = !preferences.paused && (preferences.blockedTags.length > 0 || preferences.hideUntagged);
   const [searching, setSearching] = useState(false);
@@ -28,11 +28,13 @@ export function PostsPage({ onBack, wide }: { onBack: () => void; wide: boolean 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const busy = useRef(false);
+  const seqRef = useRef(0);
   const sentinel = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const loadMore = async (reset = false) => {
-    if (busy.current) return;
+    if (busy.current && !reset) return;
+    const seq = reset ? ++seqRef.current : seqRef.current;
     const next = reset ? 1 : page + 1;
     if (!reset && next > pages) return;
     busy.current = true;
@@ -40,6 +42,7 @@ export function PostsPage({ onBack, wide }: { onBack: () => void; wide: boolean 
     setErr("");
     try {
       const res = await api.postCategory("remen-chigua", next, 20, "latest");
+      if (seq !== seqRef.current) return;
       setItems((prev) => {
         const base = reset ? [] : prev;
         const seen = new Set(base.map((x) => x.id));
@@ -49,14 +52,21 @@ export function PostsPage({ onBack, wide }: { onBack: () => void; wide: boolean 
       setPages(res?.pagination?.pages || next);
       setErr("");
     } catch (e) {
-      setErr((e as Error).message || "吃瓜内容加载失败");
+      if (seq === seqRef.current) setErr((e as Error).message || "吃瓜内容加载失败");
     } finally {
-      busy.current = false;
-      setLoading(false);
+      if (seq === seqRef.current) {
+        busy.current = false;
+        setLoading(false);
+      }
     }
   };
 
-  useEffect(() => { loadMore(true); /* eslint-disable-next-line */ }, []);
+  useEffect(() => {
+    setItems([]); setPage(0); setPages(1);
+    void loadMore(true);
+    return () => { seqRef.current++; busy.current = false; };
+    /* eslint-disable-next-line */
+  }, [lineEpoch]);
   useEffect(() => {
     const el = sentinel.current;
     if (!el || err || filtering) return;
@@ -110,7 +120,7 @@ const HIDDEN_POST_TAG = "\u9ec4\u679c";
 
 /* ================= 吃瓜详情（网页式浏览） ================= */
 export function PostDetail({ id, onBack, active = true }: { id: number; onBack: () => void; active?: boolean }) {
-  const { toast, strictSecurity, muted, setMuted, push } = useStore();
+  const { toast, strictSecurity, muted, setMuted, push, lineEpoch, accountScope } = useStore();
   const { preferences, blockReason } = useContentPreferences();
   const filtering = !preferences.paused && (preferences.blockedTags.length > 0 || preferences.hideUntagged);
   const [post, setPost] = useState<(Post & { content?: string; video_url?: string }) | null>(null);
@@ -174,7 +184,7 @@ export function PostDetail({ id, onBack, active = true }: { id: number; onBack: 
       })
       .catch((e) => { if (alive) setErr((e as Error).message || "加载失败"); });
     return () => { alive = false; };
-  }, [id, reload]);
+  }, [id, reload, lineEpoch, accountScope]);
 
   useEffect(() => {
     if (!allowed) { setResolving(false); return; }
@@ -189,7 +199,7 @@ export function PostDetail({ id, onBack, active = true }: { id: number; onBack: 
       .catch(e => { if (alive) setMediaError(e instanceof Error ? e.message : "视频解析失败"); })
       .finally(() => { if (alive) setResolving(false); });
     return () => { alive = false; };
-  }, [id, reload, mediaRetry, allowed]);
+  }, [id, reload, mediaRetry, allowed, lineEpoch, accountScope]);
 
   // Keep blocked content out of the surface while the host navigates back.
   if (currentPost && blocked) return <div className="absolute inset-0 flex items-center justify-center bg-bg" aria-label="正在返回">
